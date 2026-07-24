@@ -1055,7 +1055,8 @@ struct ReachDomain : FixPointDomain<NodeSet> {
         return true;
     }
     mutable int fCombineCalls = 0;  // to check the memo prevents exponential recompute
-    NodeSet     combine(Tree node, const std::vector<NodeSet>& kids) const override
+    NodeSet     combine(Tree node, const std::vector<NodeSet>& kids,
+                        FixPointEvaluator<NodeSet>& /*ev*/) const override
     {
         ++fCombineCalls;
         NodeSet r;
@@ -1210,7 +1211,8 @@ struct IntervalDomain : FixPointDomain<Itv> {
         return y.lo <= x.lo && x.hi <= y.hi;
     }
 
-    Itv combine(Tree node, const std::vector<Itv>& kids) const override
+    Itv combine(Tree node, const std::vector<Itv>& kids,
+                FixPointEvaluator<Itv>& /*ev*/) const override
     {
         int c;
         if (isInt(node->node(), &c)) return finite(c, c);
