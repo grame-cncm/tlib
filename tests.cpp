@@ -765,6 +765,57 @@ bool checkMutualRecursion()
     return ok;
 }
 
+//-----------------------------------------------------------------------------
+// Immutability of recursive definitions (transition regime, see tree.hh) :
+// same-body redefinition is an idempotent no-op ; different-body redefinition
+// and erasure (rec(id, nil)) feed the census, and are fatal under
+// TLIB_REC_STRICT.
+//-----------------------------------------------------------------------------
+
+bool checkRecImmutability()
+{
+    bool ok = true;
+
+    const int before = recRedefinitionCount();
+
+    // a) ref(id) creates the node with a virgin definition group
+    Tree id = tree(unique("IMM"));
+    Tree r  = ref(id);
+    {
+        Tree v = nullptr, b = nullptr;
+        CHECK(isRec(r, v, b) && b == nullptr);  // virgin : no RECDEF yet
+    }
+
+    // b) first definition, then the SAME body again : idempotent, census untouched
+    Tree body = list1(tree(symbol("f"), ref(id)));
+    CHECK(rec(id, body) == r);  // same node (hash-consed by the name)
+    CHECK(rec(id, body) == r);
+    CHECK(recRedefinitionCount() == before);
+
+    // c) a DIFFERENT body is a redefinition : counted
+    Tree body2 = list1(tree(symbol("g"), ref(id)));
+    rec(id, body2);
+    CHECK(recRedefinitionCount() == before + 1);
+
+    // c') erasing a definition group is always a redefinition : counted
+    rec(id, nil());
+    CHECK(recRedefinitionCount() == before + 2);
+
+    // under TLIB_REC_STRICT, a redefinition is fatal
+    setenv("TLIB_REC_STRICT", "1", 1);
+    bool caught = false;
+    try {
+        rec(id, body);  // id currently holds nil : this is a redefinition
+    } catch (std::runtime_error& e) {
+        caught = true;
+        CHECK(std::string(e.what()).find("immutable") != std::string::npos);
+    }
+    unsetenv("TLIB_REC_STRICT");
+    CHECK(caught);
+
+    return ok;
+}
+
 bool checkRewrite()
 {
     bool ok = true;
