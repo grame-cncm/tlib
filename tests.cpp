@@ -922,6 +922,30 @@ bool checkRewrite()
     CHECK(tree2int(body3->branch(0)) == -4);  // body replaced in place
     CHECK(body3->branch(1) == ry);            // self-reference preserved
 
+    // treeRewritePaired with a definition seam : defRule wraps each definition at
+    // its slot, and a subtree shared between a definition root and an inner
+    // position keeps its unwrapped transform at the inner position
+    {
+        Tree shared = tree(symbol("s"), tree(5));
+        Tree z      = tree(unique("Z"));
+        Tree rz = rec(z, list2(shared, tree(symbol("f"), shared, ref(z))));
+        std::unordered_map<Tree, Tree> memo;
+        Tree rw = treeRewritePaired(
+            rz, [](Tree, Tree rebuilt) { return rebuilt; }, memo,
+            [](Tree, Tree rebuilt) { return tree(symbol("FTZ"), rebuilt); });
+        Tree varz = nullptr, bodyz = nullptr;
+        CHECK(isRec(rw, varz, bodyz));
+        Tree def0 = hd(bodyz), def1 = hd(tl(bodyz));
+        CHECK(def0->node() == Node(symbol("FTZ")));     // wrapped at the slot
+        CHECK(def0->branch(0) == shared);               // identity transform inside
+        CHECK(def1->node() == Node(symbol("FTZ")));
+        CHECK(def1->branch(0)->branch(0) == shared);    // inner position unwrapped
+        // the identity-defRule overload keeps the old behaviour
+        std::unordered_map<Tree, Tree> memo2;
+        Tree ri2 = treeRewritePaired(rz, [](Tree, Tree rebuilt) { return rebuilt; }, memo2);
+        CHECK(alphaEquiv(ri2, rz));
+    }
+
     return ok;
 }
 
