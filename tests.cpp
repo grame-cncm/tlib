@@ -813,6 +813,29 @@ bool checkRecImmutability()
     unsetenv("TLIB_REC_STRICT");
     CHECK(caught);
 
+    // alphaEquiv : the direct pair-memoized alpha-equivalence
+    {
+        Tree ia = tree(unique("AEA")), ib = tree(unique("AEB")), ic = tree(unique("AEC"));
+        Tree ra = rec(ia, list1(tree(symbol("f"), ref(ia))));
+        Tree rb = rec(ib, list1(tree(symbol("f"), ref(ib))));
+        Tree rc = rec(ic, list1(tree(symbol("g"), ref(ic))));
+        CHECK(alphaEquiv(ra, rb));            // same shape, different names
+        CHECK(!alphaEquiv(ra, rc));           // different bodies
+        CHECK(alphaEquiv(ra, ra));            // reflexive, cyclic reference terminates
+        CHECK(alphaEquiv(proj(0, ra), proj(0, rb)));
+        // agreement with the de Bruijn theorem form
+        CHECK(areEquiv(ra, rb) == alphaEquiv(ra, rb));
+        CHECK(areEquiv(ra, rc) == alphaEquiv(ra, rc));
+        // the bijection is injective : one variable cannot match two partners.
+        // h(x, x) vs h(y, z) with x = f(x), y = f(y), z = f(z) : shapes agree
+        // pairwise, but x would need to bind BOTH y and z.
+        Tree iy = tree(unique("AEY")), iz = tree(unique("AEZ"));
+        Tree ry = rec(iy, list1(tree(symbol("f"), ref(iy))));
+        Tree rz = rec(iz, list1(tree(symbol("f"), ref(iz))));
+        CHECK(!alphaEquiv(tree(symbol("h"), ra, ra), tree(symbol("h"), ry, rz)));
+        CHECK(alphaEquiv(tree(symbol("h"), ra, rb), tree(symbol("h"), ry, rz)));
+    }
+
     return ok;
 }
 
