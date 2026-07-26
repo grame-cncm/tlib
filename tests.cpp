@@ -933,6 +933,37 @@ bool checkRewrite()
         CHECK(alphaEquiv(ri2, rz));
     }
 
+    // treeRewritePaired with a top-down guard : a fired cut replaces the whole
+    // subtree, its children are never visited, the bottom-up rule never sees them
+    {
+        Tree inner = tree(symbol("deep"), tree(7));
+        Tree guarded = tree(symbol("opaque"), inner);
+        Tree root  = tree(symbol("top"), guarded, tree(symbol("plain"), tree(8)));
+        std::vector<Tree>              seen;
+        std::unordered_map<Tree, Tree> memo3;
+        Tree cutTo = tree(symbol("CUT"));
+        Tree rg = treeRewritePaired(
+            root,
+            [&](Tree t) -> std::optional<Tree> {
+                if (t == guarded) {
+                    return cutTo;
+                }
+                return std::nullopt;
+            },
+            [&](Tree orig, Tree rebuilt) {
+                seen.push_back(orig);
+                return rebuilt;
+            },
+            memo3, [](Tree, Tree rebuilt) { return rebuilt; });
+        CHECK(rg->branch(0) == cutTo);                      // the cut replaced the subtree
+        CHECK(tree2int(rg->branch(1)->branch(0)) == 8);     // the rest rebuilt normally
+        bool sawInner = false;
+        for (Tree s : seen) {
+            sawInner = sawInner || (s == inner) || (s == guarded);
+        }
+        CHECK(!sawInner);  // children of a fired cut are never visited
+    }
+
     return ok;
 }
 
