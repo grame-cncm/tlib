@@ -646,8 +646,9 @@ bool checkRecursiveTrees()
 
     // Symbolic conversion demo:
     // E is a closed de Bruijn recursion with two recursive nesting levels.
-    // G shares the same E three times, while C1 uses three symbolic copies of E
-    // produced by separate deBruijn2Sym calls.
+    // deBruijn2Sym is CANONICAL: variables are named from the content of their
+    // de Bruijn form, so separate calls return the SAME symbolic tree, and
+    // alpha-equal groups fuse by hash-consing.
     Tree E  = rec(tree(symbol("mix"), ref(1),
                        rec(tree(symbol("tap"), ref(1), ref(2),
                                 rec(tree(symbol("hold"), ref(1), ref(2), ref(3))))),
@@ -656,13 +657,13 @@ bool checkRecursiveTrees()
     Tree S1 = deBruijn2Sym(E);
     Tree S2 = deBruijn2Sym(E);
     Tree S3 = deBruijn2Sym(E);
-    CHECK(S1 != S2 && S1 != S3 && S2 != S3);
+    CHECK(S1 == S2 && S2 == S3);  // canonical representative, pointer for pointer
     CHECK(isClosed(E));
     CHECK(toDeBruijnString(E).find("ref(3)") != std::string::npos);
 
     Tree C1 = tree(symbol("foo"), S1, S2, S3);
     CHECK(sym2deBruijn(C1) == G);
-    CHECK(areEquiv(deBruijn2Sym(G), C1));
+    CHECK(deBruijn2Sym(G) == C1);  // shared and copied converge to the same tree
 
     Tree sharedSym = deBruijn2Sym(G);
     CHECK(sharedSym->arity() == 3);
@@ -932,6 +933,7 @@ bool checkRewrite()
         Tree ri2 = treeRewritePaired(rz, [](Tree, Tree rebuilt) { return rebuilt; }, memo2);
         CHECK(alphaEquiv(ri2, rz));
     }
+
 
     // treeRewritePaired with a top-down guard : a fired cut replaces the whole
     // subtree, its children are never visited, the bottom-up rule never sees them
