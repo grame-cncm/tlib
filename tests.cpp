@@ -834,6 +834,15 @@ bool checkRecImmutability()
         Tree rz = rec(iz, list1(tree(symbol("f"), ref(iz))));
         CHECK(!alphaEquiv(tree(symbol("h"), ra, ra), tree(symbol("h"), ry, rz)));
         CHECK(alphaEquiv(tree(symbol("h"), ra, rb), tree(symbol("h"), ry, rz)));
+
+        // canonicalizeRecNames : alpha-equivalent trees converge to the SAME tree
+        Tree ca = canonicalizeRecNames(tree(symbol("h"), ra, rb));
+        Tree cb = canonicalizeRecNames(tree(symbol("h"), ry, rz));
+        CHECK(ca != cb);  // distinct instances : distinct prefixes, no collision
+        CHECK(alphaEquiv(ca, cb));
+        // same input canonicalized twice gives alpha-equivalent (fresh prefix) trees
+        Tree cc = canonicalizeRecNames(tree(symbol("h"), ra, rb));
+        CHECK(alphaEquiv(ca, cc));
     }
 
     return ok;
