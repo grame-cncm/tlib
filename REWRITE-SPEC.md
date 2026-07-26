@@ -10,8 +10,8 @@ date: 2026-07-06
 - **Objectifs** — les garanties que la nouvelle primitive doit tenir.
 - **Non-objectifs** — ce qui reste hors perimetre.
 - **Rec et ref : un seul cas a traiter** — pourquoi `ref(var)` n'a pas besoin d'un cas separe.
-- **API proposee** — signature de `treeRewrite` et `treeRewriteInPlace`.
-- **Semantique bottom-up** — les deux algorithmes complets, cas ordinaire et cas `rec`.
+- **API proposee** — signature de `treeRewrite` (la variante en place a ete retiree).
+- **Semantique bottom-up** — l'algorithme complet, cas ordinaire et cas `rec`.
 - **Reecriture gardee par annotation** — R1/R2 : regles a premisse sur le terme source, garde top-down `pre` + regle bottom-up `post`.
 - **Proprietes** — ce qui survit ou non a une reecriture.
 - **Relation avec tmap** — migration de l'usage historique.
@@ -119,8 +119,7 @@ corps via `RECDEF`) ; toute occurrence suivante de ce meme pointeur — qu'elle
 soit une reference recursive dans son propre corps ou une autre apparition
 partagee ailleurs dans l'arbre — est deja dans le memo local et y est
 resolue directement. C'est exactement ce que font
-`treeRewriteMemo` et `treeRewriteInPlaceMemo` (`tlib/rewrite.hh`), qui
-n'appellent jamais `isRef`.
+`treeRewriteMemo` (`tlib/rewrite.hh`), qui n'appelle jamais `isRef`.
 
 ```mermaid
 flowchart LR
@@ -132,22 +131,20 @@ flowchart LR
 
 ## API proposee
 
-Deux fonctions distinctes, pas un flag runtime : reutiliser ou non le nom de
-la variable recursive change la nature de l'operation (pure vs destructive
-sur le partage), ce n'est pas un simple detail de reglage.
-
 ```cpp
 // Cree une variable fraiche a chaque rec(var, body) rencontre. Pur : ne
 // modifie jamais RECDEF sur l'ancien noeud SYMREC(var) partage.
 template <class Rule>
 Tree treeRewrite(Tree root, Rule&& rule);
-
-// Reutilise la meme variable : reecrit RECDEF sur le noeud SYMREC(var)
-// partage. Destructif au sens logique (voir l'avertissement plus bas), a
-// n'utiliser qu'en connaissance de cause.
-template <class Rule>
-Tree treeRewriteInPlace(Tree root, Rule&& rule);
 ```
+
+::: remark [Retrait de la variante en place]
+La spec originelle proposait aussi `treeRewriteInPlace`, qui reutilisait la
+meme variable recursive (`rec(var, newBody)` reecrivait `RECDEF` sur le noeud
+`SYMREC(var)` partage). Cette variante a ete **retiree** : redefinir une
+variable est exactement ce que le protocole d'immutabilite des definitions
+recursives interdit. Aucun code de production ne l'utilisait.
+:::
 
 Meme signature que `tfun` (`Tree (*)(Tree)`) pour la regle : un template, pas
 de `std::function`, pas de `RewriteContext`.
@@ -196,63 +193,24 @@ function treeRewriteMemo(t, rule, memo)    // memo passe par reference
 end
 ```
 
-```algorithm "treeRewriteInPlace (meme variable)"
-Input: arbre root, regle rule
-Output: arbre transforme
-memo <- table vide Tree -> Tree, locale a cet appel
-return treeRewriteInPlaceMemo(root, rule, memo)
-
-function treeRewriteInPlaceMemo(t, rule, memo)    // memo passe par reference
-  if t in memo then
-    return memo[t]
-  end
-  if isRec(t, var, body) then
-    memo[t] <- t
-    newBody <- treeRewriteInPlaceMemo(body, rule, memo)
-    return rec(var, newBody)
-  end
-  branches <- []
-  changed <- false
-  for each branch b of t do
-    b2 <- treeRewriteInPlaceMemo(b, rule, memo)
-    branches <- branches + [b2]
-    changed <- changed or (b2 != b)
-  end
-  r <- tree(t.node(), branches) if changed, else t
-  result <- rule(r)
-  memo[t] <- result
-  return result
-end
-```
-
 Invariant sur l'identite (sans mutation de propriete effectuee par la regle
 utilisateur) :
 
-- `treeRewriteInPlace(t, identity) == t` pour tout arbre, pointeur pour pointeur.
-  Quand `newBody == body`, `rec(var, newBody)` redonne naturellement le
-  pointeur `t` : meme `var`, meme propriete `RECDEF`, meme hash-consing —
-  aucun cas particulier a coder.
-- Pour `treeRewrite`, seule l'alpha-equivalence tient : `areEquiv(treeRewrite(t,
-  identity), t)`. `newVar` est toujours differente de `var`, donc
-  `rec(newVar, newBody)` ne redonne jamais le pointeur `t`, meme quand rien
-  d'autre n'a change. C'est le prix de la purete : ne jamais reutiliser
-  l'ancien noeud partage.
+- Seule l'alpha-equivalence tient : `areEquiv(treeRewrite(t, identity), t)`.
+  `newVar` est toujours differente de `var`, donc `rec(newVar, newBody)` ne
+  redonne jamais le pointeur `t`, meme quand rien d'autre n'a change. C'est
+  le prix de la purete : ne jamais reutiliser l'ancien noeud partage.
 
-Les deux algorithmes ne different que sur deux points : la valeur posee dans
-`memo[t]` avant de transformer `body` (`ref(newVar)` fraiche vs `t`
-lui-meme), et la variable utilisee pour reconstruire (`newVar` vs `var`). Les
-deux reconstructions sont inconditionnelles — comparer `newBody` a `body`
-n'est jamais necessaire, le hash-consing s'en charge pour `treeRewriteInPlace`, et
-`treeRewrite` doit de toute facon toujours reconstruire. `treeRewrite` est la
-fonction recommandee par defaut.
+La reconstruction du cas `rec` est inconditionnelle — comparer `newBody` a
+`body` n'est jamais necessaire, `treeRewrite` doit de toute facon toujours
+reconstruire.
 
 Deux consequences du `return` direct dans le cas `rec` :
 
 - **Pas de mise a jour du memo apres la descente.** L'entree posee avant de
   transformer `body` est deja la valeur finale : `ref(newVar)` et
   `rec(newVar, newBody)` sont le meme pointeur (hash-consing de
-  `SYMREC(newVar)`), et de meme `t` et `rec(var, newBody)` pour
-  `treeRewriteInPlace`.
+  `SYMREC(newVar)`).
 - **`rule` n'est jamais appliquee aux noeuds `SYMREC`.** Ce n'est pas une
   restriction d'implementation mais une impossibilite semantique : une regle
   qui pretendrait remplacer une variable recursive n'est pas bien definie.
@@ -275,16 +233,6 @@ par un `rec(var, body)` ferait donc entrer l'algorithme dans le cas `rec`
 avec un corps nul. C'est une erreur de l'appelant : l'implementation la
 detecte (`TLIB_ASSERT(body != nullptr)` dans `tlib/rewrite.hh`).
 
-::: warning [`treeRewriteInPlace` : l'identite de pointeur ne prouve rien]
-`treeRewriteInPlace` reutilise `var`, donc reecrit `RECDEF` sur le noeud
-partage — destructif au sens logique, a n'utiliser qu'en connaissance de
-cause. Le benchmark `rewrite-symbolic-rec-inplace` en tient compte : apres un
-double `treeRewriteInPlace`, `restored == root` est **toujours vrai**,
-correct ou non, puisque le pointeur racine ne change jamais avec cette
-approche. Toute reecriture qui passe par `treeRewriteInPlace` doit donc
-comparer le *contenu* du corps (`areEquiv` ou comparaison structurelle),
-jamais l'identite du noeud racine.
-:::
 
 **Partage maximal apres reecriture.** Une reecriture peut rendre
 alpha-equivalentes des definitions recursives qui ne l'etaient pas : avec
@@ -357,8 +305,6 @@ D'ou les surcharges gardees, memes noms avec un callable de plus :
 //        bas pourquoi.
 template <class Pre, class Post>
 Tree treeRewrite(Tree root, Pre&& pre, Post&& post);
-template <class Pre, class Post>
-Tree treeRewriteInPlace(Tree root, Pre&& pre, Post&& post);
 ```
 
 ```algorithm "treeRewriteMemo, variante gardee (cas ordinaire)"
@@ -466,11 +412,10 @@ Tree negateNumbers(Tree root)
 ## Tests attendus
 
 - [ ] identity rewrite sur arbre ordinaire (sans `rec`) : `treeRewrite(t, id) ==
-      t` et `treeRewriteInPlace(t, id) == t`, egalite de pointeur ;
-- [ ] identity rewrite sur arbre contenant `rec` : `treeRewriteInPlace(t, id) ==
-      t` (pointeur) mais seulement `areEquiv(treeRewrite(t, id), t)` pour
-      `treeRewrite` (alpha-equivalence — une variable fraiche est toujours
-      creee) ;
+      t`, egalite de pointeur ;
+- [ ] identity rewrite sur arbre contenant `rec` : seulement
+      `areEquiv(treeRewrite(t, id), t)` (alpha-equivalence — une variable
+      fraiche est toujours creee) ;
 - [ ] changement de feuille : seuls les ancetres necessaires sont reconstruits ;
 - [ ] partage : `foo(a, a)` devient `foo(b, b)` avec `branch(0) == branch(1)` ;
 - [ ] deux appels separes ne partagent pas de memo ;
@@ -478,12 +423,10 @@ Tree negateNumbers(Tree root)
       l'ancien `SYMREC(var)` reste inchangee (l'ancien arbre reste valide et
       utilisable), et le nouveau `rec(newVar, ...)` porte bien le corps
       transforme par la regle ;
-- [ ] `treeRewriteInPlace` : corps remplace explicitement, verifie par egalite de
-      *contenu*, jamais par identite de pointeur de la racine ;
 - [ ] interaction avec hash-consing : double negation numerique restaure le
       pointeur initial sur un arbre sans `rec` ; avec `rec`, `treeRewrite` ne
       restaure qu'a alpha-equivalence pres (variables fraiches a chaque
-      passe) et `treeRewriteInPlace` restaure le contenu du corps.
+      passe).
 
 Variante gardee (`checkGuardedRewrite`) :
 
@@ -494,14 +437,13 @@ Variante gardee (`checkGuardedRewrite`) :
 - [ ] `post` n'est jamais appelee sur une garde qui coupe : la coupe est
       opaque de bout en bout, seule la reconstruction congruente (R2) passe
       par `post` ;
-- [ ] `pre` n'est jamais consultee sur un noeud `SYMREC`, et la variante
-      in-place reste stable en pointeur sous la paire identite ;
+- [ ] `pre` n'est jamais consultee sur un noeud `SYMREC` ;
 - [ ] equivalence exacte avec la forme a une regle
       (`pre` toujours `std::nullopt`, `post = rule`).
 
 ## Benchmarks attendus
 
-Les cinq scenarios sont implementes dans la section `[rewrites]` de
+Les scenarios sont implementes dans la section `[rewrites]` de
 `benchmark.cpp`, sur les nouvelles primitives :
 
 | Scenario | Fonction | Validation |
@@ -510,11 +452,9 @@ Les cinq scenarios sont implementes dans la section `[rewrites]` de
 | `rewrite-negate-shared` | `treeRewrite` | `changed=yes` |
 | `rewrite-negate-shared-rt` | `treeRewrite` x2 | `roundtrip=yes` : pointeur restaure par hash-consing (sans `rec`) |
 | `rewrite-symbolic-rec-pure` | `treeRewrite` sur arbre recursif | `pure=yes` : variable fraiche, ancienne `RECDEF` intacte |
-| `rewrite-symbolic-rec-inplace` | `treeRewriteInPlace` x2 | `roundtrip=yes` : contenu du corps restaure, jamais le pointeur racine |
 
 Chaque benchmark reporte le nombre de noeuds logiques, le temps median, et une
-note de validation basee sur le contenu (jamais sur l'identite de pointeur
-pour `treeRewriteInPlace`).
+note de validation basee sur le contenu.
 
 ## Questions ouvertes
 
@@ -525,8 +465,10 @@ Aucune pour l'instant. Decisions prises en cours de route :
   source (R1) exigent une garde top-down, ajoutee comme surcharge
   `pre`/`post` sans changer la forme a une regle ;
 
-- les noms publics sont `treeRewrite`/`treeRewriteInPlace` (prefixe `tree`
-  pour eviter tout clash de nom lors de l'integration de `tlib` dans le
-  compilateur Faust) ;
+- les noms publics portent le prefixe `tree` pour eviter tout clash de nom
+  lors de l'integration de `tlib` dans le compilateur Faust ;
+- `treeRewriteInPlace` (simple et gardee) a ete retiree : la reutilisation de
+  la variable recursive est une redefinition, interdite par le protocole
+  d'immutabilite ;
 - les benchmarks du prototype `negateNumbersSymbolicRec` ont ete migres vers
   les nouvelles primitives, et le prototype supprime de `benchmark.cpp`.

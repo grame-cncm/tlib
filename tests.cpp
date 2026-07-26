@@ -674,7 +674,7 @@ bool checkRecursiveTrees()
 }
 
 //-----------------------------------------------------------------------------
-// Bottom-up rewriting (treeRewrite / treeRewriteInPlace, see REWRITE-SPEC.md)
+// Bottom-up rewriting (treeRewrite, see REWRITE-SPEC.md)
 //-----------------------------------------------------------------------------
 
 bool checkMutualRecursion()
@@ -863,7 +863,6 @@ bool checkRewrite()
     Tree b  = tree(symbol("b"));
     Tree t1 = tree(symbol("foo"), tree(symbol("g"), a, tree(1)), b);
     CHECK(treeRewrite(t1, id) == t1);
-    CHECK(treeRewriteInPlace(t1, id) == t1);
 
     // leaf change : only the ancestors of the changed leaf are rebuilt
     Tree left = tree(symbol("g"), a, tree(1));
@@ -885,11 +884,10 @@ bool checkRewrite()
     // hash-consing : double negation restores the initial pointer
     CHECK(treeRewrite(treeRewrite(t2, negate), negate) == t2);
 
-    // identity on a recursive tree : treeRewriteInPlace is pointer-stable,
-    // treeRewrite mints a fresh variable and is only alpha-equivalent
+    // identity on a recursive tree : treeRewrite mints a fresh variable and is
+    // only alpha-equivalent
     Tree x  = tree(unique("X"));
     Tree rx = rec(x, tree(symbol("f"), tree(3), ref(x)));
-    CHECK(treeRewriteInPlace(rx, id) == rx);
     Tree fx = treeRewrite(rx, id);
     CHECK(fx != rx);
     CHECK(areEquiv(fx, rx));
@@ -910,17 +908,6 @@ bool checkRewrite()
     CHECK(tree2int(body2->branch(0)) == -3);
     CHECK(body2->branch(1) == rr);   // self-reference follows the new var
     CHECK(body0->branch(1) == rx);   // old self-reference intact
-
-    // treeRewriteInPlace on a recursive tree : same pointer no matter what, so
-    // the verification must look at the body content (see the spec warning)
-    Tree y  = tree(unique("Y"));
-    Tree ry = rec(y, tree(symbol("f"), tree(4), ref(y)));
-    Tree rp = treeRewriteInPlace(ry, negate);
-    CHECK(rp == ry);
-    Tree var3 = nullptr, body3 = nullptr;
-    CHECK(isRec(ry, var3, body3));
-    CHECK(tree2int(body3->branch(0)) == -4);  // body replaced in place
-    CHECK(body3->branch(1) == ry);            // self-reference preserved
 
     // treeRewritePaired with a definition seam : defRule wraps each definition at
     // its slot, and a subtree shared between a definition root and an inner
@@ -1019,18 +1006,17 @@ bool checkGuardedRewrite()
     CHECK(r4->branch(0) == tree(42));
     g->clearProperty(judgment);
 
-    // recursive trees : the guard is never consulted on SYMREC nodes, and
-    // the in-place variant stays pointer-stable under the identity pair
+    // recursive trees : the guard is never consulted on SYMREC nodes
     Tree z  = tree(unique("Z"));
     Tree rz = rec(z, tree(symbol("f"), tree(5), ref(z)));
     preSeen.clear();
-    Tree rzr = treeRewriteInPlace(rz, guard, negatePost);
-    CHECK(rzr == rz);  // pointer-stable (same variable reused)
+    Tree rzr = treeRewrite(rz, guard, negatePost);
+    CHECK(rzr != rz);  // fresh variable : a new definition, the old one intact
     for (Tree t : preSeen) {
         CHECK(t != rz);  // never called on the SYMREC node
     }
     Tree varz = nullptr, bodyz = nullptr;
-    CHECK(isRec(rz, varz, bodyz));
+    CHECK(isRec(rzr, varz, bodyz));
     CHECK(tree2int(bodyz->branch(0)) == -5);  // body rewritten through the rec
 
     // equivalence with the single-rule form

@@ -252,7 +252,7 @@ static Tree negateNodeNumbers(const Node& n)
     }
 }
 
-// Bottom-up rules for treeRewrite/treeRewriteInPlace (see tlib/rewrite.hh).
+// Bottom-up rules for treeRewrite (see tlib/rewrite.hh).
 // The rule receives a node whose branches are already transformed.
 static Tree negateRule(Tree t)
 {
@@ -569,29 +569,6 @@ static void benchRewrites(int scale, int runs)
         bool oldIntact = isSymbolicRecDef(root, oldVar, oldBody) && oldBody == body;
         gPtrSink = reinterpret_cast<std::uintptr_t>(rewritten);
         std::string note = "pure=" + std::string((fresh && oldIntact) ? "yes" : "NO");
-        tlib::cleanup();
-        return BenchResult{ms(t0, t1), note};
-    });
-
-    reportMedian("rewrite-symbolic-rec-inplace", recWork * 2, runs, [=]() {
-        tlib::cleanup();
-        Tree var;
-        Tree body;
-        Tree root = makeSymbolicRecursiveTree(recDepth, 1, 96, var, body);
-        auto t0 = Clock::now();
-        Tree rewritten = treeRewriteInPlace(root, negateRule);
-        Tree restored  = treeRewriteInPlace(rewritten, negateRule);
-        auto t1 = Clock::now();
-        // treeRewriteInPlace reuses `var` and mutates the shared rec node's
-        // RECDEF property, so `restored == root` holds by construction
-        // whatever happens. The only meaningful signal is the body content
-        // (see the warning in REWRITE-SPEC.md).
-        Tree restoredVar;
-        Tree restoredBody;
-        bool bodyRestored = isSymbolicRecDef(restored, restoredVar, restoredBody) &&
-                            restoredBody == body;
-        gPtrSink = reinterpret_cast<std::uintptr_t>(restored);
-        std::string note = "roundtrip=" + std::string(bodyRestored ? "yes" : "NO");
         tlib::cleanup();
         return BenchResult{ms(t0, t1), note};
     });
