@@ -145,6 +145,182 @@ bool tourNodes()
 }
 
 //-----------------------------------------------------------------------------
+// 6. Lists, sets and environments
+//-----------------------------------------------------------------------------
+
+bool tourLists()
+{
+    bool ok = true;
+
+    // A list is a TERM, so everything true of terms is true of lists : equal
+    // lists are one object, and tails are shared.
+    Tree l1 = list3(tree(1), tree(2), tree(3));
+    Tree l2 = list3(tree(1), tree(2), tree(3));
+    CHECK(l1 == l2);
+    CHECK(len(l1) == 3 && hd(l1) == tree(1));
+    CHECK(tl(l1) == tl(l2));
+    CHECK(cons(tree(0), l1) != l1 && tl(cons(tree(0), l1)) == l1);  // tail shared
+
+    // Sets are canonical ordered lists : the same elements give the same
+    // pointer whatever order they were inserted in.
+    Tree a = tree(symbol("elemA"));
+    Tree b = tree(symbol("elemB"));
+    Tree c = tree(symbol("elemC"));
+    Tree s1 = list2set(list3(a, b, c));
+    Tree s2 = list2set(list3(c, a, b));
+    CHECK(s1 == s2);
+    CHECK(list2set(list2set(list3(a, b, c))) == s1);  // idempotent
+    CHECK(isElement(b, s1));
+    CHECK(setUnion(s1, singleton(b)) == s1);  // b already in : union changes nothing
+    CHECK(addElement(b, s1) == s1);           // no duplicate
+
+    // Environments : a stack of bindings, where pushing shares the old one and
+    // shadowing covers rather than removes.
+    Tree v   = nullptr;
+    Tree env = pushEnv(a, tree(1), pushEnv(b, tree(2), nil()));
+    CHECK(searchEnv(a, v, env) && v == tree(1));
+    CHECK(searchEnv(b, v, env) && v == tree(2));
+    Tree shadowed = pushEnv(a, tree(9), env);
+    CHECK(searchEnv(a, v, shadowed) && v == tree(9));  // the top binding wins
+    CHECK(searchEnv(b, v, shadowed) && v == tree(2));  // the outer one still reachable
+
+    return ok;
+}
+
+//-----------------------------------------------------------------------------
+// 7. Signatures and opcodes
+//-----------------------------------------------------------------------------
+
+bool tourSignatures()
+{
+    bool ok = true;
+
+    Signature sigA = signature("TourAlpha");
+    Signature sigB = signature("TourBeta");
+
+    Sym add = sigA.add("TourAlpha.Add");
+    Sym sub = sigA.add("TourAlpha.Sub");
+
+    // Local opcodes are DENSE : 0, 1, ... in order of first addition, which is
+    // what lets a fold dispatch through a jump table.
+    SymbolTag tAdd, tSub;
+    CHECK(getSymbolTag(add, tAdd) && tAdd.localOpcode() == 0);
+    CHECK(getSymbolTag(sub, tSub) && tSub.localOpcode() == 1);
+    CHECK(tAdd.signature == sigA.identity());
+
+    // add() is idempotent : declaring a language twice is harmless.
+    CHECK(sigA.add("TourAlpha.Add") == add);
+
+    // An ordinary symbol is simply not a constructor -- not an error.
+    SymbolTag ordinary;
+    CHECK(!getSymbolTag(symbol("TourOrdinarySymbol"), ordinary));
+
+    // Ranges are DISJOINT : another signature restarts at local 0, but its
+    // global opcode differs.
+    Sym       otherAdd = sigB.add("TourBeta.Add");
+    SymbolTag tOther;
+    CHECK(getSymbolTag(otherAdd, tOther));
+    CHECK(tOther.localOpcode() == 0);
+    CHECK(tOther.signature != tAdd.signature);
+    CHECK(tOther.opcode != tAdd.opcode);
+
+    return ok;
+}
+
+//-----------------------------------------------------------------------------
+// 8. Recursive terms
+//-----------------------------------------------------------------------------
+
+bool tourRecursion()
+{
+    bool ok = true;
+
+    // de Bruijn form : no names at all, so two recursions that would differ
+    // only by their variable name are literally the same term.
+    Tree r1 = rec(tree(symbol("+"), tree(1), ref(1)));
+    Tree r2 = rec(tree(symbol("+"), tree(1), ref(1)));
+    CHECK(r1 == r2);
+
+    // Aperture, the synthesized attribute : a bare reference is open, a binder
+    // discharges it.
+    CHECK(isOpen(ref(1)));
+    CHECK(isClosed(r1));
+
+    // deBruijn2Sym is CANONICAL : names are derived from the content, so the
+    // same term converts to the same pointer every time.
+    Tree s1 = deBruijn2Sym(r1);
+    Tree s2 = deBruijn2Sym(r2);
+    CHECK(s1 == s2);
+
+    // In the symbolic form, rec and ref are THE SAME NODE : the definition is a
+    // property, not a branch. This is what keeps the branches acyclic.
+    Tree var = nullptr, body = nullptr;
+    CHECK(isRec(s1, var, body));
+    CHECK(body != nullptr);
+    CHECK(ref(var) == s1);
+
+    // A traversal that follows branches does NOT enter the recursion : the
+    // symbolic node's only branch is its variable.
+    CHECK(s1->arity() == 1 && s1->branch(0) == var);
+
+    return ok;
+}
+
+//-----------------------------------------------------------------------------
+// 9. Rewriting
+//-----------------------------------------------------------------------------
+
+bool tourRewriting()
+{
+    bool ok = true;
+
+    auto identity = [](Tree n) { return n; };
+
+    // Minimal reconstruction : when nothing changes, the SAME pointer comes
+    // back -- no node is rebuilt.
+    Tree t = tree(symbol("+"), tree(1), tree(2));
+    CHECK(treeRewrite(t, identity) == t);
+
+    // A local rule applied bottom-up : constant folding.
+    Tree folded = treeRewrite(t, [](Tree n) {
+        Tree x, y;
+        int  i = 0, j = 0;
+        if (isTree(n, Node(symbol("+")), x, y) && isInt(x->node(), &i) &&
+            isInt(y->node(), &j)) {
+            return tree(i + j);
+        }
+        return n;
+    });
+    CHECK(folded == tree(3));
+
+    // Sharing is preserved : a subterm occurring twice is transformed once and
+    // the two occurrences stay the same object.
+    Tree shared = tree(symbol("pair"), t, t);
+    Tree done   = treeRewrite(shared, [](Tree n) {
+        Tree x, y;
+        int  i = 0, j = 0;
+        if (isTree(n, Node(symbol("+")), x, y) && isInt(x->node(), &i) &&
+            isInt(y->node(), &j)) {
+            return tree(i + j);
+        }
+        return n;
+    });
+    CHECK(done->branch(0) == done->branch(1));
+
+    // THE surprising one : rewriting a recursive term RENAMES it. Under the
+    // identity rule the result is alpha-equivalent, never equal -- forced by the
+    // immutability of recursive definitions (a reused variable would be a
+    // redefinition, which is fatal).
+    Tree x = tree(symbol("TourX"));
+    Tree r = rec(x, tree(symbol("+"), tree(1), ref(x)));
+    Tree r2 = treeRewrite(r, identity);
+    CHECK(r2 != r);
+    CHECK(alphaEquiv(r2, r));
+
+    return ok;
+}
+
+//-----------------------------------------------------------------------------
 // 4. The session memory model
 //-----------------------------------------------------------------------------
 
@@ -187,6 +363,10 @@ int main(int, const char**)
     // Single '&' : '&&' would short-circuit and silently SKIP later sections.
     r &= tourSharing();
     r &= tourNodes();
+    r &= tourLists();
+    r &= tourSignatures();
+    r &= tourRecursion();
+    r &= tourRewriting();
     // tourSession() ends the session it runs in : keep it last.
     r &= tourSession();
 
