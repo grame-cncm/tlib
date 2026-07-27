@@ -608,8 +608,11 @@ bool checkRecursiveTrees()
 
     // Custom recursive pretty-printer: recursion management is supplied by
     // tlib while the caller remains responsible for ordinary node syntax.
-    Tree customInner = rec(py, tree(symbol("inner"), ref(px), ref(py)));
-    Tree customOuter = rec(px, tree(symbol("outer"), ref(px), customInner));
+    // (Fresh variables u/v : redefining x/y above would now be fatal.)
+    Tree pu = tree(symbol("u"));
+    Tree pv = tree(symbol("v"));
+    Tree customInner = rec(pv, tree(symbol("inner"), ref(pu), ref(pv)));
+    Tree customOuter = rec(pu, tree(symbol("outer"), ref(pu), customInner));
     std::ostringstream customOut;
     {
         RecursivePrintSession session;
@@ -636,7 +639,7 @@ bool checkRecursiveTrees()
         });
     }
     CHECK(customOut.str() ==
-          "x\nwith {\n  x := outer[x;y]\n  y := inner[x;y]\n}");
+          "u\nwith {\n  u := outer[u;v]\n  v := inner[u;v]\n}");
 
     // A completed outer session must not leak definitions into the next one.
     std::ostringstream isolatedOut;
@@ -776,17 +779,14 @@ bool checkMutualRecursion()
 }
 
 //-----------------------------------------------------------------------------
-// Immutability of recursive definitions (transition regime, see tree.hh) :
-// same-body redefinition is an idempotent no-op ; different-body redefinition
-// and erasure (rec(id, nil)) feed the census, and are fatal under
-// TLIB_REC_STRICT.
+// Immutability of recursive definitions (see tree.hh) : same-body redefinition
+// is an idempotent no-op ; a different-body redefinition and an erasure
+// (rec(id, nil)) are fatal, with no environment override.
 //-----------------------------------------------------------------------------
 
 bool checkRecImmutability()
 {
     bool ok = true;
-
-    const int before = recRedefinitionCount();
 
     // a) ref(id) creates the node with a virgin definition group
     Tree id = tree(unique("IMM"));
@@ -796,31 +796,33 @@ bool checkRecImmutability()
         CHECK(isRec(r, v, b) && b == nullptr);  // virgin : no RECDEF yet
     }
 
-    // b) first definition, then the SAME body again : idempotent, census untouched
+    // b) first definition, then the SAME body again : idempotent no-op
     Tree body = list1(tree(symbol("f"), ref(id)));
     CHECK(rec(id, body) == r);  // same node (hash-consed by the name)
     CHECK(rec(id, body) == r);
-    CHECK(recRedefinitionCount() == before);
 
-    // c) a DIFFERENT body is a redefinition : counted
-    Tree body2 = list1(tree(symbol("g"), ref(id)));
-    rec(id, body2);
-    CHECK(recRedefinitionCount() == before + 1);
-
-    // c') erasing a definition group is always a redefinition : counted
-    rec(id, nil());
-    CHECK(recRedefinitionCount() == before + 2);
-
-    // under TLIB_REC_STRICT, a redefinition is fatal
-    setenv("TLIB_REC_STRICT", "1", 1);
+    // c) a DIFFERENT body is a redefinition : fatal, and the old body survives
+    Tree body2  = list1(tree(symbol("g"), ref(id)));
     bool caught = false;
     try {
-        rec(id, body);  // id currently holds nil : this is a redefinition
+        rec(id, body2);
     } catch (std::runtime_error& e) {
         caught = true;
         CHECK(std::string(e.what()).find("immutable") != std::string::npos);
     }
-    unsetenv("TLIB_REC_STRICT");
+    CHECK(caught);
+    {
+        Tree v = nullptr, b = nullptr;
+        CHECK(isRec(r, v, b) && b == body);  // the error preserved the definition
+    }
+
+    // c') erasing a definition group is always fatal
+    caught = false;
+    try {
+        rec(id, nil());
+    } catch (std::runtime_error&) {
+        caught = true;
+    }
     CHECK(caught);
 
     // alphaEquiv : the direct pair-memoized alpha-equivalence
@@ -1227,10 +1229,11 @@ bool checkFixPoint()
     // --- Mutual recursion, signals form : X = rec(a, [ g(proj0(Y)) ]),
     //     Y = rec(b, [ h(proj0(X)) ]). Both reach {g, h} : the Jacobi solve of the
     //     two-member component must propagate each into the other. ---
+    Tree a2 = tree(unique("A"));  // fresh : rec(a, ...) again would be a fatal redefinition
     Tree b  = tree(unique("B"));
-    Tree gX = tree(symbol("g"), proj(0, ref(b)));  // depends on Y
-    Tree hY = tree(symbol("h"), proj(0, ref(a)));  // depends on X
-    Tree X2 = rec(a, list1(gX));
+    Tree gX = tree(symbol("g"), proj(0, ref(b)));   // depends on Y
+    Tree hY = tree(symbol("h"), proj(0, ref(a2)));  // depends on X
+    Tree X2 = rec(a2, list1(gX));
     Tree Y2 = rec(b, list1(hY));
     Tree root2 = tree(symbol("top"), proj(0, X2), proj(0, Y2));
 
