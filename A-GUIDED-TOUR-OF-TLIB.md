@@ -7,6 +7,22 @@ It is addressed to a C++ programmer who knows compilers by practice rather than
 by theory, and it introduces the small amount of algebra needed to see why the
 library has the shape it has.
 
+::: toc+
+- **How to read this document** — the six fixed sections, the reading paths, the forward references.
+- **Signatures and algebras** — one traversal, many interpretations: why a fold is the unit of work, and what it demands of everything below.
+- **Hash-consing and maximal sharing** — one object per distinct term, so that structural equality becomes pointer equality.
+- **Nodes and symbols** — what a node may hold, and interning as the base case of the same idea.
+- **The session memory model** — allocate freely, free everything at once, and why that suits a compiler.
+- **Properties** — attaching computed facts to shared terms: memoisation as the library's central service.
+- **Lists, sets and environments** — derived structures encoded as terms, and so shared for free.
+- **Signatures and opcodes** — constant-time constructor identity, the mechanism §1 assumed.
+- **Recursive terms** — finite syntax for infinite trees: de Bruijn and symbolic forms, and canonical sharing modulo alpha-equivalence.
+- **Rewriting** — bottom-up transformation of shared and cyclic terms, where memoisation becomes a termination argument.
+- **Fixed points** — computing attributes over recursive terms: Kleene ascent, widening and narrowing.
+- **Optional modules** — boolean conditions, occurrence counting.
+- **The stack, in one picture** — what TLIB is, and what it deliberately never knows.
+:::
+
 ## How to read this document
 
 Each concept is presented in six fixed sections, always in the same order, so
@@ -19,7 +35,7 @@ that a section can be skipped without losing the thread:
 | **More precisely** | the concise mathematical statement, once the intuition is in place |
 | **In the code** | how it is realised in C++, with pointers to the source |
 | **Invariants and non-goals** | what must stay true, and what the concept deliberately does not do |
-| **Origins** | where the idea comes from, and one paper worth reading |
+| **Origins** | where the idea comes from, and what to read about it |
 
 Three reading paths follow from this. *The idea* + *Its role* alone give a
 complete informal tour. Adding *More precisely* gives the theoretical account.
@@ -608,10 +624,11 @@ one expression.
 The most spectacular demonstration of what maximal sharing plus memoisation
 buys is Randal Bryant's *Graph-Based Algorithms for Boolean Function
 Manipulation* (IEEE Trans. Computers, 1986). A reduced ordered BDD is precisely
-a hash-consed DAG of a decision term, and every BDD operation is a memoised
-fold over it; that combination turned Boolean function manipulation from
-intractable into routine, and it is architecturally the same as what §2 and §5
-describe here.
+a maximally shared DAG of a decision term, and its central operations combine
+that canonical DAG with memoised recursive traversal — `Apply`, for instance,
+recurses on both arguments and keeps a table of the pairs it has already
+handled. That combination turned Boolean function manipulation from intractable
+into routine, and it is architecturally what §2 and §5 describe here.
 
 For the engineering rather than the theory, Jean-Christophe Filliâtre and
 Sylvain Conchon's *Type-Safe Modular Hash-Consing* (ML Workshop, 2006) is the
@@ -701,9 +718,10 @@ them. Because symbols have *names*, a hash derived from the name rather than
 the address is available, which is what lets §2's `canonHash` be reproducible
 across processes — the recursion bottoms out in a value, not in an address.
 And because names can be *generated*, TLIB can mint fresh symbols[^gensym] on
-demand, which is how §8 names the variables it introduces.
+demand, which is how §5 gives each property a private key and how §9 names the
+variables it introduces.
 
-[^gensym]: `unique("R")` returns a symbol named `R0`, `R1`, `R2`, … guaranteed not to collide with any existing one. The idea and the need are as old as Lisp macros, where the same operator is called `gensym`: whenever a program generates a binding, it must be able to name it without accidentally capturing a name the user chose. §8 uses it for the variables introduced when converting a recursion to symbolic form.
+[^gensym]: `unique("W")` returns a symbol named `W0`, `W1`, `W2`, … guaranteed not to collide with any existing one. The need is as old as Lisp macros, where the same operator is called `gensym`: a program that generates a binding must be able to name it without capturing a name the user chose. In TLIB it is used for the fresh variables introduced by rewriting (§9) and — less obviously — to give every `property` object a private key that no other property can collide with (§5).
 
 ### More precisely
 
@@ -729,10 +747,14 @@ The type of trees is then given by a single recursive definition:
 — a node paired with a finite sequence of subtrees. The equation is to be read
 *inductively*: of its several solutions we take the smallest, the trees of
 finite depth, which is the one §1's folds need if they are to reach a leaf and
-stop. It is also, in the vocabulary of §1, the initial one. §8 is where that
-restriction has to be given up, and it is why the notation $μ$ is kept in
-reserve here: there it will denote recursion *inside* a term, which is a
-different thing from the recursion of the definition above.
+stop. It is also, in the vocabulary of §1, the initial one.
+
+This carrier never changes. §8 does not replace it by something infinite: it
+adds two ordinary constructors — a binder and a reference to it — so that a
+*finite* tree can denote an infinite unfolding. The trees stay finite, their
+meaning need not, and that gap is what makes §8 and §10 delicate. It is also
+why the notation $μ$ is kept in reserve here: there it will denote recursion
+*inside* a term, a different thing from the recursion of the definition above.
 
 This equation is the precise content of "TLIB provides a universal carrier".
 There is exactly **one** tree type, not
@@ -783,20 +805,33 @@ library leans on:
 bool operator==(const Node& n) const { return fType == n.fType && fData.v == n.fData.v; }
 ```
 
-The payload is compared through `fData.v`, the 64-bit member — that is, as raw
-bits, whatever the actual type. This explains a detail that would otherwise
-look superstitious: the narrower constructors write `fData.f = 0.0` *before*
-storing their value ([node.hh:109-141](tlib/node.hh#L109-L141)). Zeroing the
-widest member first makes the unused bits deterministic, so that two nodes
-built from the same `int` compare equal.
+The payload is compared through `fData.v`, the 64-bit member, whatever the
+member actually written was — the comparison is on the payload's *bits*, not on
+its value. This explains a detail that would otherwise look superstitious: the
+narrower constructors write `fData.f = 0.0` *before* storing their value
+([node.hh:109-141](tlib/node.hh#L109-L141)). Zeroing the widest member first
+makes the unused bits deterministic, so that two nodes built from the same
+`int` compare equal.
 
-Comparing floating-point payloads as bits rather than with `==` is also the
-right choice, and not only for speed. IEEE equality is not reflexive: a `NaN`
-is not equal to itself. A hash-consing table built on it would fail to find a
-`NaN` node it had just inserted, and would keep allocating new ones forever.
-Bitwise comparison restores reflexivity and makes node equality a genuine
-equivalence relation. The price is a second surprise in the other direction:
-`+0.0` and `-0.0` have different bit patterns, so they are different nodes.
+Comparing floating-point payloads by bits rather than with `==` is not merely a
+shortcut, it is necessary. IEEE equality is not reflexive: a `NaN` is not equal
+to itself. A hash-consing table built on it would fail to find a `NaN` node it
+had just inserted, and would keep allocating new ones forever. Bitwise
+comparison restores reflexivity and makes node equality a genuine equivalence
+relation, which §2 needs it to be. The price is a surprise in the other
+direction: `+0.0` and `-0.0` have different bit patterns, so they are different
+nodes.
+
+The *means* by which those bits are compared is a different matter, and worth
+being honest about. Reading `fData.v` when the member last written was `f`, `s`
+or `i` is type punning through a union: every mainstream C++ compiler supports
+it as a documented extension, and TLIB relies on that, but the standard does
+not guarantee it — the portable spelling is `std::memcpy` or, since C++20,
+`std::bit_cast`. `canonicalHash` a few lines above already does it the portable
+way for doubles ([node.hh:96-101](tlib/node.hh#L96-L101)), so the library
+contains both idioms. Nothing in the *design* depends on the choice: the
+semantics intended here is "compare the payload as an opaque 64-bit word", and
+`bit_cast` expresses exactly that with no runtime cost.
 
 Pattern matching is a family of predicates rather than a `switch` on the tag —
 `isInt(n, &i)`, `isDouble(n, &d)`, `isSym(n, &s)`
@@ -872,14 +907,22 @@ payload exists precisely so that this is rarely necessary.
 
 ### Origins
 
-Both halves of this section are in the paper that started the field: John
-McCarthy's *Recursive Functions of Symbolic Expressions and Their Computation
-by Machine, Part I* (CACM 3(4), 1960). Lisp's data is atoms and pairs — TLIB's
-nodes and branches — and Lisp's atoms are interned in the *oblist*, so that
-reading the same name twice yields the same object and `eq` compares them in
-one instruction. The design of this section is that arrangement, sixty years
-on, with a tagged union in place of the atom types and a growable hash table in
-place of the association list.
+The shape of the data is John McCarthy's, in the paper that started the field:
+*Recursive Functions of Symbolic Expressions and Their Computation by Machine,
+Part I* (CACM 3(4), 1960). An S-expression is an atom or a pair of
+S-expressions — TLIB's node and its branches — and structures are shared rather
+than copied. The paper also gives atomic symbols a **property list**, a place
+to attach facts about a name rather than about an occurrence: that is the
+ancestor of the signature and opcode fields §7 stores on a `Symbol`, and, one
+level up, of the tree properties of §5.
+
+Interning as a *global* mechanism — one table holding every symbol, so that
+reading the same name twice yields the same object and `eq` decides equality in
+one instruction — belongs to the implementations rather than to the 1960 paper;
+the object list is documented in the *LISP 1.5 Programmer's Manual* (McCarthy
+et al., MIT Press, 1962) and became standard equipment afterwards. It is worth
+keeping the two apart: TLIB's symbol table descends from the object list, while
+TLIB's per-symbol and per-tree annotations descend from property lists.
 
 For the table itself, the reference is Knuth's *The Art of Computer
 Programming*, volume 3, §6.4 — separate chaining, load factors and rehashing
