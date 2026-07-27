@@ -1,4 +1,4 @@
-# A guided visit to TLIB
+# A guided tour of TLIB
 
 TLIB is the tree library at the heart of the [Faust](https://faust.grame.fr)
 compiler. This document explains what it is made of, in the order in which its
