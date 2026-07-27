@@ -340,6 +340,15 @@ bool checkHashConsing()
     CHECK(t1->serial() < t2->serial());
     CHECK(std::less<CTree*>()(t1, t2));
 
+    // canonHash must not cancel on repeated identical children (XOR-linearity
+    // regression) : with the old 'h = h*F ^ child' combine, a list of two
+    // equal elements hashed to a CONSTANT independent of the elements, so
+    // these two lists collided -- and distinct rec groups with duplicated
+    // definitions fused under one content-derived deBruijn2Sym name
+    Tree la = cons(tree(1), cons(tree(1), nil()));
+    Tree lb = cons(tree(2), cons(tree(2), nil()));
+    CHECK(la->canonHash() != lb->canonHash());
+
     return ok;
 }
 
