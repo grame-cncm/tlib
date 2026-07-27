@@ -41,6 +41,14 @@ Three reading paths follow from this. *The idea* + *Its role* alone give a
 complete informal tour. Adding *More precisely* gives the theoretical account.
 Adding *In the code* gives the implementer's account.
 
+Each concept ends with the commit its source references were checked against.
+Line numbers drift; that stamp is what tells you how much history separates the
+text from the code, and turns re-verification into a targeted diff rather than a
+full re-read. The behaviours the tour finds surprising are not merely described
+either — they live as running checks in
+[tour-examples.cpp](tour-examples.cpp), wired into `ctest`, so a claim that
+stops being true breaks a test instead of quietly becoming fiction.
+
 The concepts are ordered by dependency: each one is introduced before the
 sections that rest on it. The order is not a strict layering, though, and it
 would be dishonest to pretend otherwise — the first concept needs a `Tree` to
@@ -334,6 +342,8 @@ second fails. This is why the example above names its constructors
 language is the convention that keeps independent clients out of each other's
 way. What signatures make disjoint is the *opcode space*, not the *name space*.
 
+*Code references verified at `9e26537`.*
+
 ### Origins
 
 The framework is that of **universal algebra**, whose modern form dates from
@@ -396,12 +406,17 @@ Consider:
 
 ```cpp
 Tree t = tree(symbol("x"));
-for (int i = 0; i < 30; i++) t = tree(fAdd, t, t);
+for (int i = 0; i < 30; i++) t = tree(symbol("Add"), t, t);
 ```
 
 As a term, `t` has more than a billion leaves. As a hash-consed structure, it
-is 31 nodes. Any compiler that duplicates subexpressions — inlining,
-substitution, unrolling — produces this shape constantly, in milder form.
+is 31 nodes — `CHECK(dagSize(t) == 31)` in
+[tour-examples.cpp:81](tour-examples.cpp#L81). Better still, rebuilding the
+same thing later from scratch does not allocate anything: the independent
+reconstruction lands on the very same object
+([tour-examples.cpp:89](tour-examples.cpp#L89)). Any compiler that duplicates
+subexpressions — inlining, substitution, unrolling — produces this shape
+constantly, in milder form.
 
 **Trees become immutable, and this is forced, not chosen.** If two parts of the
 compiler hold the same node because it has the same content, one of them cannot
@@ -545,13 +560,31 @@ changes.
 
 **`fCanonHash`** ([tree.hh:253](tlib/tree.hh#L253)) exists for the cases where
 that is not good enough. It is a structural hash synthesised at construction
-from the node's canonical hash and the children's, and `canonicalTreeLess`
+from the node's canonical hash and the children's — and the way the children
+are combined ([tree.cpp:186](tlib/tree.cpp#L186)) is worth a second look,
+because the obvious formula is wrong here:
+
+```cpp
+h ^= br[i]->canonHash() + 0x9e3779b97f4a7c15ULL + (h << 12) + (h >> 4);
+```
+
+The addition is what matters. Write the combine the tempting way, as
+`h = h * F ^ child`, and it becomes **XOR-linear**: two identical children
+contribute the same value twice and cancel each other out. Terms with repeated
+identical subterms — a stereo output whose two channels are equal, two equal
+definitions in one recursive group — would then hash to a constant, and
+collapse together in any name derived from the hash. Mixing an addition in
+breaks the linearity, so cancellation cannot happen. The same flaw existed in
+Faust's associative-commutative judge and was fixed there too; the pattern is
+now banned in both.
+
+`canonicalTreeLess`
 ([tree.cpp:229](tlib/tree.cpp#L229)) uses it as the primary key of a total
 order derived from *values only* — symbols compared by name, ties broken
 structurally. Two processes that build the same term values order them
 identically, whatever their construction history, which is what canonical forms
 need. One exception is deliberate: a node carrying a raw pointer payload falls
-back to hashing the pointer ([node.hh:90](tlib/node.hh#L90)), so terms
+back to hashing the pointer ([node.hh:104](tlib/node.hh#L104)), so terms
 containing such nodes are outside the canonical guarantee — they are not meant
 to enter canonical orderings.
 
@@ -609,6 +642,8 @@ the construction table, and a node shared by an unknown number of parents has
 no obvious owner to release it. The library does not attempt reclamation during
 a session at all — see §4 for what it does instead, and why that suits a
 compiler.
+
+*Code references verified at `9e26537`.*
 
 ### Origins
 
@@ -789,7 +824,7 @@ control characters on the way in, as the invariants below record.
 
 ### In the code
 
-`Node` is at [node.hh:75](tlib/node.hh#L75), and it is exactly the tagged union
+`Node` is at [node.hh:77](tlib/node.hh#L77), and it is exactly the tagged union
 described above:
 
 ```cpp
@@ -798,20 +833,26 @@ class Node : public Garbageable {
     union { int i; double f; Sym s; void* p; int64_t v; } fData;
 ```
 
-Equality ([node.hh:144](tlib/node.hh#L144)) is the one line the rest of the
+Equality ([node.hh:176](tlib/node.hh#L176)) is the one line the rest of the
 library leans on:
 
 ```cpp
-bool operator==(const Node& n) const { return fType == n.fType && fData.v == n.fData.v; }
+bool operator==(const Node& n) const { return fType == n.fType && payload() == n.payload(); }
 ```
 
-The payload is compared through `fData.v`, the 64-bit member, whatever the
-member actually written was — the comparison is on the payload's *bits*, not on
-its value. This explains a detail that would otherwise look superstitious: the
-narrower constructors write `fData.f = 0.0` *before* storing their value
-([node.hh:109-141](tlib/node.hh#L109-L141)). Zeroing the widest member first
+`payload()` ([node.hh:93](tlib/node.hh#L93)) reads the union as one opaque
+64-bit word, whatever member was actually written — the comparison is on the
+payload's *bits*, not on its value. It is spelled with `memcpy` (the C++17
+spelling of `std::bit_cast`, which compiles to a single load) rather than by
+reading an inactive union member, which every mainstream compiler supports but
+the standard does not.
+
+This explains a detail that would otherwise look superstitious: the narrower
+constructors write `fData.f = 0.0` *before* storing their value
+([node.hh:130-162](tlib/node.hh#L130-L162)). Zeroing the widest member first
 makes the unused bits deterministic, so that two nodes built from the same
-`int` compare equal.
+`int` compare equal — which is what makes a whole-word comparison exact for
+payloads narrower than the word.
 
 Comparing floating-point payloads by bits rather than with `==` is not merely a
 shortcut, it is necessary. IEEE equality is not reflexive: a `NaN` is not equal
@@ -820,22 +861,13 @@ had just inserted, and would keep allocating new ones forever. Bitwise
 comparison restores reflexivity and makes node equality a genuine equivalence
 relation, which §2 needs it to be. The price is a surprise in the other
 direction: `+0.0` and `-0.0` have different bit patterns, so they are different
-nodes.
-
-The *means* by which those bits are compared is a different matter, and worth
-being honest about. Reading `fData.v` when the member last written was `f`, `s`
-or `i` is type punning through a union: every mainstream C++ compiler supports
-it as a documented extension, and TLIB relies on that, but the standard does
-not guarantee it — the portable spelling is `std::memcpy` or, since C++20,
-`std::bit_cast`. `canonicalHash` a few lines above already does it the portable
-way for doubles ([node.hh:96-101](tlib/node.hh#L96-L101)), so the library
-contains both idioms. Nothing in the *design* depends on the choice: the
-semantics intended here is "compare the payload as an opaque 64-bit word", and
-`bit_cast` expresses exactly that with no runtime cost.
+nodes. Both halves are checked in
+[tour-examples.cpp:114-122](tour-examples.cpp#L114-L122), next to the IEEE
+behaviour they depart from.
 
 Pattern matching is a family of predicates rather than a `switch` on the tag —
 `isInt(n, &i)`, `isDouble(n, &d)`, `isSym(n, &s)`
-([node.hh:180](tlib/node.hh#L180) onwards), each testing the tag and extracting
+([node.hh:212](tlib/node.hh#L212) onwards), each testing the tag and extracting
 the payload in one call. Their tree-level counterparts `tree2int`, `tree2str`
 and friends ([tree.hh:392](tlib/tree.hh#L392) onwards) do the same one level
 up, raising a TLIB error instead of returning false.
@@ -864,7 +896,8 @@ after 10 000 attempts.
 One detail in `Symbol::get` is easy to miss and shows up in the invariants
 below: every character below 32 is replaced by a space before the name is
 hashed ([symbol.cpp:135](tlib/symbol.cpp#L135)). Names are normalised, so
-`symbol("a\nb")` and `symbol("a b")` are the *same* symbol.
+`symbol("a\nb")` and `symbol("a b")` are the *same* symbol
+([tour-examples.cpp:132](tour-examples.cpp#L132)).
 
 ### Invariants and non-goals
 
@@ -905,6 +938,8 @@ alpha-equivalent recursive terms land on the same pointer.
 `Node`, its equality, its canonical hash and its predicates. The pointer
 payload exists precisely so that this is rarely necessary.
 
+*Code references verified at `9e26537`.*
+
 ### Origins
 
 The shape of the data is John McCarthy's, in the paper that started the field:
@@ -927,3 +962,478 @@ TLIB's per-symbol and per-tree annotations descend from property lists.
 For the table itself, the reference is Knuth's *The Art of Computer
 Programming*, volume 3, §6.4 — separate chaining, load factors and rehashing
 are exactly what `Symbol::get` and `CTree::make` implement.
+
+---
+
+## 4. The session memory model
+
+### The idea
+
+Ask the obvious question about §2 and you get an uncomfortable answer. A tree
+is reachable from every parent that contains it, from the construction table
+that produced it, and from any property list that mentions it — and none of
+those knows about the others. So: **who deletes it?**
+
+The classic answers all fit badly here.
+
+*Reference counting* is the reflex, but the construction table holds a
+reference to every tree that exists, so no count ever reaches zero. You would
+have to make the table's reference special, then decide when to sweep it,
+which is a garbage collector wearing a disguise.
+
+*Garbage collection* would work, at the price of knowing the roots, scanning,
+and — the awkward part — removing dead entries from the hash table as it goes.
+
+*Individual deletion* is not even expressible: no piece of code is in a
+position to know that it holds the last use of a subterm, because sharing is
+precisely the property that hides that information.
+
+TLIB takes the fourth answer: **nobody deletes anything, until everything is
+deleted at once**. A **session** is the interval between `tlib::init()` and
+`tlib::cleanup()` — for a compiler, one compilation. During the session,
+allocation is free and reclamation does not happen. At `cleanup()`, every tree,
+every symbol and every property table goes in one sweep, and the library is
+immediately ready for the next session.
+
+A C++ programmer will recognise the arena, or region, pattern: group objects
+with a common lifetime and release them together. The twist is the choice of
+region. Here there is exactly one, and it is the whole library for the whole
+compilation.
+
+This looks like a shortcut and it is worth insisting that it is not. Freeing a
+tree individually would not merely be difficult — it would be **unsound**,
+because it would break §2. Suppose a tree were freed and the allocator later
+handed the same address back for an unrelated term. Some pointer obtained
+earlier would then compare equal to a tree it has nothing to do with, and
+"pointer equality is structural equality" would silently become false. The
+session model is what makes that impossible: within a session, an address is
+handed out once and means the same term forever.
+
+### Its role in TLIB
+
+The memory model is not a service TLIB offers on the side; it is the condition
+under which the previous two sections are true at all.
+
+**It makes the construction table harmless.** §2's table keeps a pointer to
+every tree ever built. Under any reclamation scheme that would be a leak to
+manage or a weak-reference mechanism to design. Under the session model it is
+simply not a question.
+
+**It makes annotation safe.** §5 attaches computed facts to trees, keyed by
+tree pointers. That is only meaningful if a tree outlives every table that
+mentions it, which here is automatic: nothing outlives the session and nothing
+dies before it.
+
+**It makes memoisation valid across an entire compilation.** A fold's result
+cached during an early pass is still attached to the right node in a later
+pass, because the node has not moved and cannot have been recycled.
+
+And it fixes the shape of the contract with the host application. `Tree` and
+`Sym` are not owning handles; they are borrowed pointers whose validity is the
+session's. A batch compiler never notices. A hosted compiler — `libfaust`
+compiling one program after another — must call `cleanup()` between them, and
+must not keep a `Tree` across the boundary.
+
+### More precisely
+
+This is **region-based memory management** in its simplest form: lifetime is a
+property of a *region*, not of an object. Allocation puts an object in the
+region; nothing is deallocated individually; the region is released as a whole.
+TLIB has exactly one region per session.
+
+The property that matters is stronger than "memory is eventually reclaimed".
+Write $⌜·⌝$ for §2's map from terms to addresses. §2 claimed it is injective.
+What the session model adds is that it is also **stable**:
+
+> Within a session, $⌜t⌝$ is defined once and never changes, and no address is
+> ever reused for a different term.
+
+Without stability, injectivity would only hold instant by instant, and every
+pointer held across a deallocation would be suspect. With it, a `Tree` obtained
+at any point in the session remains a valid, exact name for its term until
+`cleanup()`. This is what licenses pointer-keyed tables (§5), pointer equality
+as term equality (§2), and serial numbers as a stable order (§2). The boundary
+itself is exercised in [tour-examples.cpp:151](tour-examples.cpp#L151): a term,
+then `cleanup()`, then the same term rebuilt in a fresh session — with the
+comment marking the exact line past which the earlier pointer must not be
+touched.
+
+The cost is stated just as simply: peak memory is the **total** allocated
+during the session, not the live set at any moment. There is no reuse. The
+model is therefore sound exactly when sessions are bounded — which is the case
+for a compilation, and is not the case for a long-running interactive process
+that never calls `cleanup()`.
+
+### In the code
+
+Everything hangs on one base class, [garbageable.hh:41](tlib/garbageable.hh#L41):
+
+```cpp
+class TLIB_API Garbageable {
+   public:
+    static void* operator new(std::size_t size);
+    static void  operator delete(void* ptr);
+    static void  cleanup();   ///< delete every Garbageable allocated since the last cleanup
+};
+```
+
+`CTree`, `Symbol` and `Node` all derive from it. `operator new`
+([garbageable.cpp:79](tlib/garbageable.cpp#L79)) allocates normally and then
+records the pointer in a global list; `cleanup()`
+([garbageable.cpp:51](tlib/garbageable.cpp#L51)) walks that list and deletes
+every entry.
+
+It is worth being precise about what this is and is not. It is a **registry**,
+not an arena: allocation still goes through `::operator new`, plus one list
+node per object. The win is not allocation speed — a bump allocator would be
+faster — but ownership: no code anywhere has to decide whether it holds the
+last use of anything. A flag, `gHeapCleanup`
+([garbageable.cpp:49](tlib/garbageable.cpp#L49)), tells individual deletes to
+skip the registry while the sweep is running, which is what keeps `cleanup()`
+linear instead of quadratic.
+
+Individual deletion *is* still possible during a session, and its cost tells
+you it is not meant to be common: `operator delete` calls `std::list::remove`
+([garbageable.cpp:95](tlib/garbageable.cpp#L95)), a linear scan of every live
+object. Delete one object, fine; delete in a loop and the session is quadratic.
+
+The registries are function-local statics
+([garbageable.cpp:35](tlib/garbageable.cpp#L35)) rather than file-scope ones —
+construct-on-first-use. A `Garbageable` may well be allocated from another
+translation unit's static initialiser, and C++ leaves the relative order of
+those unspecified; a function-local static is initialised on first call,
+whatever the order.
+
+`tlib::init()` and `tlib::cleanup()` ([tlib.cpp:43](tlib/tlib.cpp#L43)) are the
+session boundary, and `cleanup()` does two things rather than one:
+
+```cpp
+void cleanup()
+{
+    Garbageable::cleanup();   // free every tree, symbol, property table
+    resetInternals();         // and reset the tables and internal caches
+}
+```
+
+The second line is the subtle one. TLIB itself holds a few lazily interned
+symbols and cached key trees — the list `cons`/`nil`, the recursion symbols,
+the property keys of `recursive-tree.cpp`. Those die with everything else in
+the first line, so the static variables pointing at them must be cleared too,
+or the next session would start with pointers into freed memory. That is what
+`tlibResetListInternals()` and `tlibResetRecInternals()`
+([tlib.cpp:30-31](tlib/tlib.cpp#L30-L31)) exist for. The rule generalises: a
+cache holding `Tree` values is session state, and must be reset when the
+session is.
+
+One platform difference is worth knowing before it surprises you. On Windows
+([garbageable.cpp:55-63](tlib/garbageable.cpp#L55-L63)), `cleanup()` frees the
+memory of each object without invoking its destructor, because an object using
+virtual inheritance from `Garbageable` may not have the same complete-object
+address as the stored pointer. Memory is reclaimed either way, but a
+destructor's own work is not done — `CTree::~CTree`, for instance, is what
+deletes a node's property map.
+
+### Invariants and non-goals
+
+**Every `Tree` and every `Sym` is invalid after `cleanup()`.** They are
+borrowed pointers, not handles, and their lifetime is exactly the session's.
+Storing one in a structure that outlives the session is the one truly fatal
+mistake this design allows.
+
+**Nothing is reclaimed during a session.** Memory grows monotonically with the
+number of *distinct* terms built. Maximal sharing is what makes this
+affordable: what grows is the number of distinct subterms, not the number of
+times they are used.
+
+**A session is single-threaded.** The construction table, the symbol table and
+the allocation registries are global mutable state with no synchronisation
+anywhere in the library. Two threads building trees concurrently corrupt them.
+(The one exception is diagnostic: the printer's context in
+[recursive-print.cpp:41](tlib/recursive-print.cpp#L41) is `thread_local`, so
+printing from several threads is safe.)
+
+**`Garbageable` is not a general-purpose allocator.** It is a registry of
+objects with a single common lifetime. Using it for objects that should die
+early converts them into leaks-until-cleanup, and deleting them by hand costs
+a linear scan.
+
+**There is no reference counting, and a raw `Tree` needs no wrapper.** The
+session model is the whole storage story: a raw pointer is valid for the whole
+session, which is the longest anything lives. `P<T>`
+([smartpointer.hh:22-26](tlib/smartpointer.hh#L22-L26)) looks like an owning
+smart pointer and is not one — it is a null-checking wrapper with an empty
+destructor, unused by the library itself but still live downstream, where
+Faust's audio types are `Type = P<AudioType>`. Read it as a null-safety
+convenience, never as ownership.
+
+*Code references verified at `9e26537`.*
+
+### Origins
+
+The technique is old and has been rediscovered under several names — arenas,
+regions, zones, pools. The classic engineering reference is David Hanson's
+*Fast allocation and deallocation of memory based on object lifetimes*
+(Software: Practice and Experience 20(1), 1990), which makes the case exactly
+as this section does: group objects whose lifetimes coincide, allocate
+cheaply, and free the group in one operation instead of tracking objects
+individually.
+
+The theoretical development is Mads Tofte and Jean-Pierre Talpin's
+*Region-Based Memory Management* (Information and Computation 132(2), 1997),
+where a type-and-effect system *infers* the regions rather than leaving them to
+the programmer. TLIB does not need the inference — it has one region — but the
+paper is where the notion that lifetime can be a property of a region rather
+than of an object is worked out properly.
+
+The pattern is also standard practice in compilers built since: LLVM's
+`BumpPtrAllocator` and the per-pass arenas of most modern compiler
+infrastructures rest on the same observation, that a compilation is a bounded
+batch process whose peak memory is bounded by its input.
+
+---
+
+## 5. Properties
+
+### The idea
+
+Everything so far has been building up to this one. §1 showed that a pass over
+a term is a fold. §2 made structurally equal terms be the same object. §4 made
+that object's address stable for the whole compilation. Put the three together
+and the conclusion is immediate: **the result of a fold can be cached on the
+node itself, and looked up by pointer.**
+
+Why it must be cached at all is worth re-deriving, because the numbers are
+brutal. Take the 31-node DAG of §2, the one denoting a term with 2³⁰ leaves. A
+fold written the obvious way recurses into both children of every node, so it
+performs a billion operations on a structure of 31 nodes. It re-computes the
+value of the *same shared subterm* over and over — and §1's uniqueness theorem
+says that value cannot possibly differ between visits. Every recomputation is
+provably redundant. Memoise, and the same fold performs 31 operations.
+
+So a pass needs a table from tree to result. The obvious C++ answer is a
+`std::unordered_map<Tree, P>` living in the pass. TLIB offers something else:
+the table is turned inside out and **distributed over the nodes themselves**.
+Each `CTree` carries a small map, and an annotation is stored there:
+
+```cpp
+property<int> depth;          // one pass's annotation
+depth.set(t, 3);              // stored on t itself
+int d; depth.get(t, d);       // read back from t
+```
+
+Two things make this work. First, a lookup no longer searches anything global —
+you already hold `t`, so you are already at the table. Second, and less
+obviously, the cache inherits the lifetime of what it annotates: the annotation
+dies with the node, at `cleanup()`, and no pass ever has to remember to clear
+its table.
+
+The remaining question is how one node distinguishes the annotations of a dozen
+different passes. The answer is a small trick with a large payoff: a property's
+key is itself a **tree**, built from a freshly generated symbol (§3), minted
+when the `property` object is constructed. Two `property<int>` objects created
+by two unrelated passes therefore have different keys and cannot collide — with
+no registry of property names, no enum to extend, and no coordination between
+passes that do not know about each other.
+
+### Its role in TLIB
+
+This is the service the whole library exists to provide. Sections 1 to 4 each
+established one of its preconditions, and none of them is dispensable:
+
+| Precondition | From | Without it |
+| :--- | :--- | :--- |
+| the value depends only on the term | §1 (uniqueness) | the cache returns wrong answers |
+| equal terms are one object | §2 (hash-consing) | the cache misses every shared subterm |
+| addresses are stable and unique | §4 (session) | a cached entry can migrate to another term |
+| the annotation outlives no one | §4 (session) | dangling entries, or manual invalidation |
+
+Turn any one of them off and memoisation stops being sound, cheap, or safe.
+That is why this concept comes fifth rather than first: it is not a feature
+bolted on, it is what the four preceding decisions were *for*.
+
+Its practical role is equally direct. A Faust compilation is a sequence of
+passes over the same shared graph — typing, interval analysis, occurrence
+counting, code generation — and each is a fold whose results are properties.
+Properties are also how passes communicate: one pass annotates, a later pass
+reads. The tree is the blackboard.
+
+### More precisely
+
+A property is a **partial function** $Tree ⇀ P$, represented not as one table
+but distributed: the graph of the function is scattered across the nodes it is
+defined on.
+
+The condition under which caching it is legitimate is exactly §1's uniqueness,
+and it deserves stating as an obligation on the *caller* rather than a property
+of the library:
+
+> A value may be memoised on a tree only if it is a function of that tree
+> alone.
+
+Anything else — a value depending on the path taken to reach the node, on a
+surrounding environment, on a mutable compiler flag — is not a function of the
+tree, and storing it on the tree makes the second reader of that node get an
+answer computed for someone else. This is the one way to use properties
+incorrectly, and the library cannot detect it.
+
+The interesting case is a function of *two* arguments, $f(a, b)$, which is
+common in practice: evaluating a box in an environment, substituting in a
+context. Such a function is not memoisable on $a$ alone. Either the pair
+$(a, b)$ becomes the key — the compound-key approach — or the table nests,
+$a ↦ (b ↦ P)$. §5's `property2` is the second, and the reason is measured
+rather than aesthetic; see below.
+
+The complexity statement is the payoff. For a fold with memoisation over a
+hash-consed term:
+
+```math
+\text{cost} = O(\#\{\text{distinct subterms}\}) \quad\text{instead of}\quad O(\#\{\text{subterms}\})
+```
+
+— the cost becomes the size of the DAG rather than the size of the term it
+denotes, and §2 showed the gap between the two is unbounded.
+
+### In the code
+
+The mechanism on the node is four short methods on `CTree`
+([tree.hh:306-335](tlib/tree.hh#L306-L335)):
+
+```cpp
+typedef std::map<Tree, Tree> plist;   // both key and value are Trees
+void setProperty(Tree key, Tree value);
+Tree getProperty(Tree key);           // nullptr when absent
+```
+
+Everything is a tree, including the key — which is what makes the mechanism
+untyped and universal. `plist` is allocated **lazily**
+([tree.hh:161-168](tlib/tree.hh#L161-L168)): about 72% of nodes never receive a
+property, so an always-present member would be paid for by three nodes out of
+four for nothing. The comment there also records why it is a `std::map` rather
+than a flat scanned buffer: one real Faust file has a single node carrying tens
+of thousands of properties, and a linear scan made the whole compilation
+quadratic.
+
+`property<P>` ([property.hh:30](tlib/property.hh#L30)) is the typed façade over
+that untyped mechanism, and the key line is its constructor:
+
+```cpp
+property() : fKey(tree(Node(unique("property_")))) {}
+```
+
+A fresh symbol per property object (§3's `gensym`), turned into a tree, used as
+the key. There is also a named form, `property("some-name")`, for the rarer
+case where two parts of a program must deliberately share one annotation.
+
+For `P = Tree`, `int` and `double` there are specialisations
+([property.hh:73](tlib/property.hh#L73) onwards) that store the value directly
+in a node — the value *is* a tree, or fits in one. For any other `P`, the
+generic template boxes the value in a `GarbageablePtr<P>` and stores the
+pointer in a node, which costs an allocation and an indirection but works for
+arbitrary C++ types.
+
+Two refinements are where the engineering shows, and both are worth reading in
+the source because both record what was measured.
+
+**`fFastProperty`** ([tree.hh:297](tlib/tree.hh#L297)) is a single dedicated
+slot on every `CTree`, bypassing the map entirely, for one caller-chosen hot
+property — in Faust, `propagate`, about 20% of all property traffic measured
+over `examples/*.dsp`. The warning attached to it matters: unlike
+`setProperty`, this slot is **not namespaced by key**, so exactly one consumer
+in the whole program may claim it, and two unrelated users of it would silently
+overwrite each other.
+
+**`property2`** ([property.hh:157](tlib/property.hh#L157) and its `Tree`
+specialisation at [property.hh:251](tlib/property.hh#L251)) memoises the binary
+functions described above, and its two long comment blocks are a rare thing in
+a library: a written record of three designs that were tried and rejected on
+measurement.
+
+- The naive approach folds $b$ into a freshly hash-consed compound key on every
+  call. Every distinct $b$ then mints both a new tree and a new property entry
+  piled on the same $a$; one real case reached **56 000+ entries on a single
+  node**.
+- Nesting a container under $a$ instead fixes that, but the container has to
+  reach `setProperty` wrapped in a brand-new `CTree` — 100+ bytes, never
+  shareable, one per annotated node. Two attempts along this line regressed
+  memory, worst on files where most nodes need several distinct $b$ (about 89%
+  of boxes in `piano1.dsp`).
+- Falling back to the compound key after the second $b$ fixed memory and
+  regressed time: every access then paid a global hash-consing lookup on top of
+  the local one.
+
+The design that survived, for the case that is actually used, does the opposite
+of everything this section has advocated: `property2<Tree>` keeps its table in
+**its own** `std::unordered_map<Tree, Entry>`, keyed directly by the `a`
+pointer, and never touches `CTree`'s property list at all. The first $(b,
+value)$ pair lives inline in the entry; a second distinct $b$ promotes it to a
+small nested map. That the library's most-used memo table abandoned the
+per-node scheme is not an embarrassment — it is the honest answer to a
+different access pattern, and the reasoning is preserved in the code precisely
+so that nobody re-derives the three rejected designs.
+
+One detail in that specialisation connects back to §2. Keying by raw pointer in
+an `unordered_map` makes iteration order depend on addresses, which vary
+between runs — exactly the non-determinism §2 warned about. The code notes why
+it is harmless here: the map is only ever point-queried by $(a, b)$ and never
+iterated, so its order cannot leak into generated output.
+
+### Invariants and non-goals
+
+**A memoised value must be a function of the tree alone.** The library cannot
+check this, and violating it produces wrong results rather than crashes — the
+worst kind. If a value depends on a context, the context belongs in the key
+(`property2`), not in your assumptions.
+
+**Properties never go stale within a session, and this is structural.** A tree
+is immutable (§2), so the input to a memoised function cannot change under its
+cached result. There is no invalidation protocol because there is nothing to
+invalidate. What *can* go stale is a value depending on state outside the
+trees — a compiler option, a target — which is a violation of the invariant
+above, not a limitation of the mechanism.
+
+**Everything is session state.** Properties die at `cleanup()` with the nodes
+they annotate (§4). A `property` object that outlives a session must not be
+reused across the boundary: its key tree belonged to the old session.
+
+**Distinct `property` objects are independent; identically named ones are
+not.** The default constructor guarantees isolation through a fresh symbol.
+The named constructor deliberately gives that up, and two components using the
+same name share one annotation, whether or not they intended to.
+
+**`fFastProperty` has exactly one legitimate owner.** It is not keyed, so it
+offers no protection at all against a second claimant.
+
+**`property2<Tree>` is not part of a tree's property list.** It keeps its own
+table, so `clearProperties()` on a node does not clear it, and a debugging pass
+that dumps a node's properties will not show it.
+
+**The generic `property<P>` does not free its boxed values before cleanup.**
+`set` allocates a `GarbageablePtr<P>`; overwriting reuses it, but the storage
+is only reclaimed at the end of the session, like everything else.
+
+**None of this is thread-safe.** Properties are ordinary mutable state on
+shared nodes, and §4's single-thread rule covers them.
+
+*Code references verified at `9e26537`.*
+
+### Origins
+
+The idea of hanging computed facts on the nodes of a syntax tree, and of
+defining a pass by what it computes at each construct rather than by how it
+walks, is Donald Knuth's *Semantics of Context-Free Languages* (Mathematical
+Systems Theory 2(2), 1968) — attribute grammars. A property in the sense of
+this section is a **synthesized attribute**: a value computed from a node's
+children and stored at the node. The inherited attributes of the same paper are
+the case TLIB deliberately does not support, because a value flowing *down*
+from a parent is not a function of the subtree alone, and so is exactly what
+must not be memoised on it — see the invariant above. `property2` is the
+pragmatic answer for the commonest such case.
+
+The storage mechanism is older still and was met in §3: the property lists that
+McCarthy's 1960 Lisp attached to atomic symbols. `setProperty`/`getProperty` is
+that device, moved from symbols to trees.
+
+For memoisation itself the reference remains Michie's 1968 memo functions,
+cited in §1 — and it is worth noticing that Knuth's attribute grammars and
+Michie's memo functions appeared in the same year, independently, as two views
+of one idea: compute a value from a structure, once, and keep it.
