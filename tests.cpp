@@ -836,7 +836,10 @@ bool checkRecImmutability()
         CHECK(!alphaEquiv(tree(symbol("h"), ra, ra), tree(symbol("h"), ry, rz)));
         CHECK(alphaEquiv(tree(symbol("h"), ra, rb), tree(symbol("h"), ry, rz)));
 
-        // canonicalizeRecNames : alpha-equivalent trees converge to the SAME tree
+        // canonicalizeRecNames : per-call instance prefix (immutability), so
+        // alpha-equivalent inputs converge to alpha-equivalent trees whose names
+        // agree modulo the prefix -- NOT to the same pointer (that is
+        // deBruijn2Sym's job, with content-derived names)
         Tree ca = canonicalizeRecNames(tree(symbol("h"), ra, rb));
         Tree cb = canonicalizeRecNames(tree(symbol("h"), ry, rz));
         CHECK(ca != cb);  // distinct instances : distinct prefixes, no collision
