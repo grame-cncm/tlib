@@ -56,3 +56,10 @@ target_compile_definitions(tlib-benchmark PRIVATE TLIB_BUILD_TYPE="$<CONFIG>")
 # recursive tree conversion demo
 add_executable(tlib-recursive-demo recursive-demo.cpp)
 target_link_libraries(tlib-recursive-demo PRIVATE tlib)
+
+# The demo and the benchmark carry validation checks (canonical conversion,
+# rewrite roundtrips) : run them in ctest so a semantic change that breaks
+# their narrative is caught, not silently shipped. --runs 1 keeps the
+# benchmark smoke test fast ; timings are irrelevant here, only the notes.
+add_test(NAME tlib-recursive-demo COMMAND tlib-recursive-demo)
+add_test(NAME tlib-benchmark-smoke COMMAND tlib-benchmark --scale 1 --runs 1)

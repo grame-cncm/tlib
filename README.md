@@ -7,8 +7,10 @@ Standalone version of the tree library used at the heart of the
 trees with the same content are always the *same* pointer, so structural
 equality is pointer equality, and memoization comes for free by attaching
 properties to trees. On top of this core it provides symbols, lists, sets,
-environments, recursive trees (de Bruijn ↔ symbolic, with alpha-equivalence
-by construction), and typed memoization primitives.
+environments, recursive trees (de Bruijn ↔ symbolic; the de Bruijn form is
+canonical by hash-consing, and `deBruijn2Sym` derives symbolic names from the
+content, so alpha-equivalent recursive trees are the *same pointer* in both
+representations), and typed memoization primitives.
 
 ## Quick example
 
@@ -55,8 +57,10 @@ int main()
 | `tlib/symbol.hh/.cpp` | interned symbols and `Signature`: dense, disjoint constructor opcodes — see [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md) |
 | `tlib/property.hh` | `property<P>` (unary) and `property2<Tree>` (binary) memoization |
 | `tlib/list.hh/.cpp` | lists, sets (canonical ordered lists), environments |
-| `tlib/recursive-tree.cpp` | `rec` / `ref`: de Bruijn and symbolic recursive trees |
-| `tlib/rewrite.hh` | `treeRewrite` / `treeRewriteInPlace`: bottom-up rewriting over shared and symbolic-recursive trees — see [REWRITE-SPEC.md](REWRITE-SPEC.md) |
+| `tlib/recursive-tree.cpp` | `rec` / `ref`: de Bruijn and symbolic recursive trees; `deBruijn2Sym` is canonical (content-derived names, same tree in → same pointer out) |
+| `tlib/recursive-print.hh/.cpp` | `toDeBruijnString` / `toSymbolicString` diagnostics |
+| `tlib/rewrite.hh` | `treeRewrite` (plain and `pre`/`post` guarded) and `treeRewritePaired` (paired rule, exposed memo, definition seam): bottom-up rewriting over shared and symbolic-recursive trees — see [REWRITE-SPEC.md](REWRITE-SPEC.md) |
+| `tlib/fixpoint.hh` | generic attribute computation by fixed point over recursive terms (Kleene ascent + widening/narrowing, descending probe) |
 | `tlib/dcond.hh/.cpp` | boolean conditions in DNF/CNF (optional module) |
 | `tlib/occur.hh/.cpp` | subtree occurrence counting (optional module) |
 | `tlib/garbageable.hh/.cpp` | session memory model: allocate freely, free all at cleanup |
@@ -242,34 +246,35 @@ Benchmark groups:
 - `property2-set-one-box` / `property2-get-one-box`: memoizes one tree under
   many environment trees using `property2<Tree>`, matching the Faust
   `eval(box, env)` and pattern-matcher use case.
+- `rewrite-identity-shared`: applies the identity rule to a shared tree and
+  checks that the very same root pointer comes back (`identity=yes`) — the
+  minimal-reconstruction guarantee of `treeRewrite`.
 - `rewrite-negate-shared`: rewrites a shared tree by negating every numeric
   node. The transformation memoizes by `Tree` pointer, so this measures a
   reversible local rewrite over a DAG rather than over the fully expanded
   logical tree.
 - `rewrite-negate-shared-rt`: applies the same negation twice and checks that
   hash-consing returns the original root pointer (`roundtrip=yes`).
-- `rewrite-negate-symbolic-rec`: applies the negation rewrite to a symbolic
-  recursive tree. The traversal follows the body stored by `rec(var, body)`,
-  but treats `ref(var)` as a terminal while `var` is bound, avoiding a recursive
-  cycle through the definition property.
-- `rewrite-negate-symbolic-rt`: applies the symbolic recursive rewrite twice
-  and checks both that the root pointer is restored and that the recursive body
-  property is back to the original body.
+- `rewrite-symbolic-rec-pure`: applies the negation rewrite to a symbolic
+  recursive tree. `treeRewrite` creates a fresh variable for each definition
+  and never touches the old `RECDEF` (`pure=yes`): the original tree stays
+  valid, the result is alpha-equivalent.
 - `build-debruijn-rec`: builds a deep de Bruijn recursive tree and checks that
   the enclosing `rec` closes it.
 - `debruijn-to-symbolic`: converts that recursive tree to symbolic form using a
   local per-call memo, exercising substitution and hash-consing without storing
   a persistent conversion property on the tree.
 - `debruijn-to-symbolic-repeat`: converts the same tree again with a new local
-  memo, so bound symbolic variables are fresh across calls.
+  memo and checks that the result is the *same pointer* (`canonical`): the
+  symbolic names are derived from the content, not drawn fresh per call.
 - `debruijn-to-symbolic-cached`: converts the recursive tree using the explicit
   persistent tree-property cache.
 - `debruijn-to-symbolic-cached-hit`: converts the same tree again and should hit
   the persistent memoized result.
 - `symbolic-to-debruijn`: converts the symbolic recursive tree back to de
   Bruijn form and checks that the roundtrip restored the original tree.
-- `symbolic-to-debruijn-hit`: converts the same symbolic tree again and should
-  hit the memoized result.
+- `symbolic-to-debruijn-repeat`: converts the same symbolic tree again and
+  checks the result is stable (`stable`).
 - `alpha-equivalence-symbolic`: compares two symbolic recursive trees that only
   differ by their bound variable identities.
 - `lift-open-rec-body`: applies `lift` to the open recursive body, measuring

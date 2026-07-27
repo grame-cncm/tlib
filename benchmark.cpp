@@ -44,6 +44,7 @@
 using Clock = std::chrono::steady_clock;
 
 static volatile std::uintptr_t gPtrSink   = 0;
+static int                     gBadNotes  = 0;  // scenarios whose validation note failed
 static volatile std::size_t    gCountSink = 0;
 
 struct BenchResult {
@@ -121,6 +122,9 @@ static void reportMedian(const std::string& name, std::size_t work, int runs, Me
 
     if (!stableNote) {
         note = "unstable-note";
+    }
+    if (note.find("BAD") != std::string::npos) {
+        ++gBadNotes;
     }
     report(name, work, median(samples), note);
 }
@@ -614,7 +618,9 @@ static void benchRecursiveTrees(int scale, int runs)
         Tree sym2        = deBruijn2Sym(r);
         auto t1          = Clock::now();
         gPtrSink         = reinterpret_cast<std::uintptr_t>(sym2);
-        std::string note = (sym != sym2 && areEquiv(sym, sym2)) ? "fresh-call" : "BAD";
+        // deBruijn2Sym is canonical (content-derived names) : converting the
+        // same tree twice yields the SAME pointer, no persistent cache needed
+        std::string note = (sym == sym2) ? "canonical" : "BAD";
         tlib::cleanup();
         return BenchResult{ms(t0, t1), note};
     });
@@ -868,6 +874,10 @@ int main(int argc, const char* argv[])
     // Keep the sinks observable.
     if (gPtrSink == 0 && gCountSink == 0) {
         std::cerr << "unexpected empty benchmark sinks\n";
+        return 1;
+    }
+    if (gBadNotes > 0) {
+        std::cerr << gBadNotes << " scenario(s) failed their validation note\n";
         return 1;
     }
     return 0;

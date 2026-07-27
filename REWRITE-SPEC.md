@@ -13,6 +13,7 @@ date: 2026-07-06
 - **API proposee** — signature de `treeRewrite` (la variante en place a ete retiree).
 - **Semantique bottom-up** — l'algorithme complet, cas ordinaire et cas `rec`.
 - **Reecriture gardee par annotation** — R1/R2 : regles a premisse sur le terme source, garde top-down `pre` + regle bottom-up `post`.
+- **La famille appariee `treeRewritePaired`** — regle `rule(original, rebuilt)`, memo expose, couture `defRule` sur les definitions recursives.
 - **Proprietes** — ce qui survit ou non a une reecriture.
 - **Relation avec tmap** — migration de l'usage historique.
 - **Exemple** — negation des nombres.
@@ -26,9 +27,10 @@ volontairement restreinte : arbres **symboliques** uniquement (pas de
 representation de Bruijn), traversal **bottom-up** uniquement. L'objectif
 est de remplacer les patterns ad hoc historiques (`tmap`, `substitute`, et un
 prototype de benchmark aujourd'hui disparu) par une primitive locale et
-correcte vis-a-vis du partage et des recursions symboliques. Etat : les deux
-primitives sont implementees (`tlib/rewrite.hh`), testees (`checkRewrite`) et
-mesurees (section `[rewrites]` de benchmark.cpp).
+correcte vis-a-vis du partage et des recursions symboliques. Etat : les trois
+familles sont implementees (`tlib/rewrite.hh` — simple, gardee `pre`/`post`,
+appariee `treeRewritePaired`), testees (`checkRewrite`, `checkGuardedRewrite`)
+et mesurees (section `[rewrites]` de benchmark.cpp).
 
 Ce document occupe l'etage intermediaire d'une pile documentaire. En
 dessous, le README decrit les invariants des arbres que la presente spec
@@ -98,9 +100,10 @@ correctement `rec(var, body)`.
   reste la forme recommandee pour les regles purement structurelles ;
 - la representation de Bruijn (`rec(body)` / `ref(n)`, aperture, `isClosed`) ;
 - un `RewriteContext` expose a l'utilisateur : la regle de base a exactement
-  la signature de `tfun` (`Tree(Tree)`) ; la variante gardee ajoute deux
-  callables (`pre : Tree -> Tree`, `post : (Tree, Tree) -> Tree`), toujours
-  sans objet contexte ;
+  la signature de `tfun` (`Tree(Tree)`) ; la variante gardee ajoute un
+  callable (`pre : Tree -> std::optional<Tree>`, `post` gardant la signature
+  simple), la famille appariee change la regle en `Tree(Tree, Tree)` —
+  toujours sans objet contexte ;
 - du calcul d'attributs dependant du contexte (compter des occurrences,
   threader un environnement comme `sym2deBruijnReady`) : ces calculs ont
   besoin d'une memoisation `(Tree, contexte) -> resultat`, hors de portee
@@ -354,6 +357,61 @@ generation). Ce recalcul est la responsabilite du pipeline appelant — la
 discipline est « reecrire, puis re-annoter », jamais « maintenir les
 annotations au fil de la reecriture ».
 :::
+
+## La famille appariee `treeRewritePaired`
+
+Cas rencontre en portant les passes de promotion et les algebres de la
+bibliotheque `signals` : la regle a besoin de consulter les **annotations
+portees par le noeud ORIGINAL** (types, intervalles, domaines d'horloge)
+tout en construisant a partir des branches deja reecrites. La forme gardee
+ne suffit pas : `post` ne voit que le noeud reconstruit, qui ne porte aucune
+annotation.
+
+```cpp
+// rule recoit LES DEUX arbres : l'original (porteur d'annotations) et le
+// reconstruit (branches deja transformees). Le memo est passe par reference
+// par l'appelant : il expose l'association original -> resultat, ce qui
+// permet d'apparier des operandes imbriques (arguments empaquetes en liste)
+// avec leurs transformes.
+template <class Rule>
+Tree treeRewritePaired(Tree root, Rule&& rule,
+                       std::unordered_map<Tree, Tree>& memo);
+
+// surcharge avec couture de definition : defRule(origDef, rebuiltDef) est
+// appliquee a chaque element d'un corps de rec — chaque definition
+// recursive, apres sa propre reecriture, avant que le groupe soit noue.
+template <class Rule, class DefRule>
+Tree treeRewritePaired(Tree root, Rule&& rule,
+                       std::unordered_map<Tree, Tree>& memo, DefRule&& defRule);
+
+// forme complete : garde top-down pre(orig) -> optional<Tree> (R1, meme
+// discipline que la variante gardee) + regle appariee + couture defRule.
+template <class Pre, class Rule, class DefRule>
+Tree treeRewritePaired(Tree root, Pre&& pre, Rule&& rule,
+                       std::unordered_map<Tree, Tree>& memo, DefRule&& defRule);
+```
+
+Trois differences avec les formes precedentes :
+
+- **la regle est appariee** : `rule(original, rebuilt)`, retourner `rebuilt`
+  signifie « pas de changement local ». La priorite R1/R2 et le cas `rec`
+  (variable fraiche, memo pose avant la descente) sont identiques ;
+- **le memo est expose** : fourni par l'appelant, il peut etre consulte apres
+  l'appel (quel original a donne quel resultat) ou partage entre plusieurs
+  racines d'une meme passe. Il reste local a la passe — pas de propriete
+  persistante ;
+- **la couture `defRule`** : dans un corps de `rec` en forme de liste, chaque
+  definition est reconstruite element par element et `defRule` peut
+  l'envelopper a sa place (poser un marqueur de domaine, tracer). L'enveloppe
+  est positionnelle : ni les definitions enveloppees ni les cellules cons ne
+  sont memoisees, un sous-arbre partage entre racine de definition et
+  position interne garde partout ailleurs son transforme non enveloppe. La
+  queue (le terminateur nil, ou un corps entier non-liste) passe par la
+  reecriture ordinaire.
+
+La garde `pre` n'est jamais consultee sur un noeud `SYMREC`, comme dans la
+variante gardee. Tests : sections `treeRewritePaired` de `checkRewrite`
+(couture positionnelle, partage preserve, garde qui coupe).
 
 ## Proprietes
 
