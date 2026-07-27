@@ -63,3 +63,11 @@ target_link_libraries(tlib-recursive-demo PRIVATE tlib)
 # benchmark smoke test fast ; timings are irrelevant here, only the notes.
 add_test(NAME tlib-recursive-demo COMMAND tlib-recursive-demo)
 add_test(NAME tlib-benchmark-smoke COMMAND tlib-benchmark --scale 1 --runs 1)
+
+# The executable claims of A-GUIDED-TOUR-OF-TLIB.md. The guided tour quotes this
+# file by line reference instead of carrying dead excerpts, so a documented
+# behaviour that stops being true breaks a test rather than turning the document
+# into fiction. Same reasoning as the demo and the benchmark above.
+add_executable(tlib-tour-examples tour-examples.cpp)
+target_link_libraries(tlib-tour-examples PRIVATE tlib)
+add_test(NAME tlib-tour-examples COMMAND tlib-tour-examples)
