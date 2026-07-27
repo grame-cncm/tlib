@@ -697,7 +697,7 @@ and **constant-time**.
 That immediately rules out the obvious representation. A node cannot hold a
 `std::string`: comparing two would cost a `strcmp`, and every tree construction
 would pay it. It cannot hold a polymorphic object either, since comparing two
-of those means a virtual call at best.
+of those costs a virtual call at least.
 
 What it holds instead is a **tagged union** of five fixed-size payloads — a
 32-bit integer, a 64-bit integer, a double, a symbol, or a raw pointer — so
@@ -1437,3 +1437,1546 @@ For memoisation itself the reference remains Michie's 1968 memo functions,
 cited in §1 — and it is worth noticing that Knuth's attribute grammars and
 Michie's memo functions appeared in the same year, independently, as two views
 of one idea: compute a value from a structure, once, and keep it.
+
+---
+
+## 6. Lists, sets and environments
+
+### The idea
+
+A compiler needs more than trees. It needs lists of arguments, sets of free
+variables, environments mapping names to values. The reflex is to reach for
+`std::vector`, `std::set`, `std::map`.
+
+TLIB does something else, and the whole chapter follows from it: **these
+structures are not new types, they are terms**. A list is a tree built from two
+constructors, `cons` and `nil`, exactly as Lisp builds one:
+
+```tree svg "the list (1, 2, 3) as an ordinary term"
+Sym(cons)
+  Int(1)
+  Sym(cons)
+    Int(2)
+    Sym(cons)
+      Int(3)
+      Sym(nil)
+```
+
+Nothing in `list.cpp` allocates anything but trees. `cons(a, b)` *is*
+`tree(gConsSym, a, b)`.
+
+The payoff is that everything the previous chapters established applies to
+lists without a line of extra code:
+
+- **Two equal lists are the same pointer.** Comparing two argument lists of any
+  length costs one instruction, and a list can be a property key, a set
+  element, or a node of another tree.
+- **Tails are shared automatically.** `cons(x, l)` allocates one node and
+  reuses `l` — the classic persistent list, obtained here not by careful
+  design but because hash-consing leaves no alternative. Two lists ending in
+  the same suffix share that suffix even if they were built by unrelated
+  passes hours apart.
+- **Lists are immutable**, so an environment captured in a closure cannot be
+  mutated behind its holder's back.
+
+Sets and environments are then built on lists, and each adds exactly one idea.
+
+A **set** is a list that is *ordered and duplicate-free*. That is a canonical
+form in the sense of §2: every set of the same elements is the same list, hence
+the same pointer, so set equality is again pointer equality and identical sets
+computed by different analyses coalesce.
+
+An **environment** is a stack of key-value pairs, searched from the top. Pushing
+a binding does not modify the environment; it builds a new one that shares the
+old as its tail. Lexical scoping and shadowing fall out of list structure, and
+an inner scope costs one node.
+
+### Its role in TLIB
+
+This chapter is the demonstration that §1's claim of a *universal carrier* was
+not rhetorical. The one tree type absorbs the auxiliary data structures of a
+compiler, and they inherit sharing, constant-time equality, immutability,
+memoisability and session lifetime — five properties that would each have to be
+re-engineered for a `std::vector`.
+
+It is also what lets the rest of the library stay small. `property` keys are
+trees; environments passed to `property2` are trees; the free-variable sets an
+analysis computes are trees, so they can themselves be memoised on the nodes
+they describe. A set of symbols returned by a fold is a value in the same
+universe as the term it came from, and §9's rewriting traverses environments
+with the same machinery as terms.
+
+The price is stated plainly in the non-goals: these are *functional* structures
+with functional costs. `nth` is linear, `addElement` is linear, and a list used
+where an array is wanted will disappoint.
+
+### More precisely
+
+Lists extend the signature of §1 with two constructors:
+
+```math
+Σ_{list} = \{\, \mathrm{nil}^{(0)},\; \mathrm{cons}^{(2)} \,\}
+```
+
+— and nothing more, so a list *is* a term of the universal carrier and every
+statement of §2 to §5 applies to it unchanged.
+
+Sets are the interesting case, because they are a **quotient**: the set
+$\{a, b\}$ has many list representations, and TLIB picks one. Write $\prec$ for
+the total order on trees. A list $[e_1, …, e_n]$ is the canonical form of a set
+when
+
+```math
+e_1 ≺ e_2 ≺ … ≺ e_n
+```
+
+— strictly increasing, so ordered *and* duplicate-free in one condition. Every
+set operation preserves that form, `list2set` establishes it, and the
+consequence is the one §2 promised: because the representative is unique, and
+because equal terms are one object, **set equality is pointer equality** —
+inserting the same three elements in two different orders yields one object
+([tour-examples.cpp:171](tour-examples.cpp#L171)).
+Sorted representatives also make union, intersection and difference linear
+merges rather than quadratic scans.
+
+The order used is the one on serial numbers (§2), which is worth remembering
+precisely: it is a total order, reproducible for a given construction history,
+but *not* derived from values. Two sessions that build the same elements in a
+different order will canonicalise the same set to the same *pointer* within
+each session, but the element order — and so the printed representation — may
+differ between them. `CanonicalTreeLess` exists for the cases where that is not
+acceptable; sets do not use it.
+
+An environment is a list of pairs, and lookup is the standard rule that makes
+shadowing work:
+
+```math
+\mathrm{search}(k, \mathrm{push}(k', v, ρ)) =
+\begin{cases}
+v & \text{if } k = k' \\
+\mathrm{search}(k, ρ) & \text{otherwise}
+\end{cases}
+```
+
+— the topmost binding of a key hides every binding below it, and no binding is
+ever removed or modified, only covered
+([tour-examples.cpp:184](tour-examples.cpp#L184)).
+
+### In the code
+
+Everything is in [list.hh](tlib/list.hh) and [list.cpp](tlib/list.cpp), and the
+constructors are as small as promised
+([list.cpp:143](tlib/list.cpp#L143)):
+
+```cpp
+Tree cons(Tree a, Tree b) { ensureListSymbols(); return tree(gConsSym, a, b); }
+```
+
+`nil` is a single tree built from a `nil` symbol
+([list.cpp:135](tlib/list.cpp#L135)), created on first use and — because it is
+session state (§4) — reset by `tlibResetListInternals()` at `cleanup()`. The
+predicates `isNil` and `isList` ([list.cpp:152](tlib/list.cpp#L152)) test the
+node and the arity, which is the pattern every client fold uses.
+
+`hd` and `tl` are `branch(0)` and `branch(1)`
+([list.hh:140-148](tlib/list.hh#L140-L148)) — a list is *not* a distinguished
+type, so accessing its head is accessing a branch.
+
+The set operations ([list.cpp:325](tlib/list.cpp#L325) onwards) are where the
+canonical form is maintained, and `addElement` shows the shape of all of them:
+
+```cpp
+Tree addElement(Tree e, Tree l)
+{
+    if (isList(l)) {
+        if (e->serial() < hd(l)->serial()) return cons(e, l);       // insert here
+        else if (e == hd(l))               return l;                // already present
+        else                               return cons(hd(l), addElement(e, tl(l)));
+    } else {
+        return cons(e, nil());
+    }
+}
+```
+
+Three things are worth noticing. The comparison is on `serial()`, the total
+order discussed above. The `e == hd(l)` test is a pointer comparison doing the
+work of a deep structural equality, which is §2 paying off inside a data
+structure. And the last branch rebuilds the prefix while sharing the tail —
+the rebuilt prefix nodes are themselves hash-consed, so inserting into two
+similar sets does not duplicate the shared parts.
+
+`setUnion` ([list.cpp:387](tlib/list.cpp#L387)) is a merge of two sorted lists
+that stops early on `isNil`, and — a small but real optimisation that only
+sharing makes possible — returns the *other* list unchanged when one side is
+empty, rather than copying it.
+
+Environments are two functions, `pushEnv` and `searchEnv`
+([list.cpp:443-448](tlib/list.cpp#L443-L448)), over the same cons cells.
+
+Two utilities in the same file bridge to §9. `tmap`
+([list.cpp:538](tlib/list.cpp#L538)) applies a function to every node of a tree
+with a caller-supplied property key as its memo, and `substitute`
+([list.cpp:609](tlib/list.cpp#L609)) replaces a variable by a value. Both are
+the ancestors of the general rewriting machinery, and `substitute` is one of
+the two functions whose per-call fresh keys produced the pathological node
+carrying tens of thousands of properties that §5 mentioned.
+
+*Code references verified at `9e26537`.*
+
+### Invariants and non-goals
+
+**A list is a term, with all that follows.** Equal lists are one pointer,
+lists can be property keys and set elements, and nothing can mutate one. There
+is no separate list type to convert to or from.
+
+**Sets are canonical only with respect to the serial order.** Within a session,
+equal sets are the same pointer — that is the guarantee clients rely on. But
+the order is derived from construction history, not from values, so the
+*element order* of a set is not reproducible across processes that built their
+elements differently. For orderings that must survive that, §2's
+`CanonicalTreeLess` is the tool, and sets do not use it.
+
+**Set operations assume their arguments are already canonical.** `setUnion` of
+two arbitrary lists is meaningless; go through `list2set` first. Nothing checks
+this.
+
+**These are functional structures with functional costs.** `nth`, `len`,
+`isElement`, `addElement` and `searchEnv` are all linear. An environment
+searched in a hot loop is a linear scan, and the remedy is memoisation (§5),
+not a different container.
+
+**Recursion is by the C++ stack.** `addElement`, `setUnion` and their siblings
+recurse over the list, so a set of a hundred thousand elements is a hundred
+thousand frames deep. The structures are meant for the modest collections a
+compiler manipulates — argument lists, free-variable sets — not for bulk data.
+
+**An environment never forgets.** Shadowing covers a binding, it does not
+remove it, so a deeply nested scope keeps every outer binding reachable and
+alive. That is what makes environments cheap to copy and share; it also means
+they only shrink by being discarded.
+
+### Origins
+
+This is Lisp again, and deliberately: the `cons`/`nil` pair, the shared tails,
+the association list used as an environment are all in McCarthy's 1960 paper
+(§3). What TLIB adds is that the cells are hash-consed, which turns two
+familiar properties into stronger ones — structural equality becomes pointer
+equality, and sharing becomes automatic rather than a consequence of how the
+programmer happened to build the list.
+
+The general principle behind lists, sets and environments here is
+**persistence**: an operation produces a new version without destroying the
+old, and versions share their common parts. Chris Okasaki's *Purely Functional
+Data Structures* (Cambridge University Press, 1998) is the reference for
+designing such structures and for reasoning about their costs — including the
+honest accounting of which operations stay linear.
+
+Representing a set as a sorted duplicate-free list, so that equality is
+representation equality and union is a merge, is folklore; the observation that
+matters here is Filliâtre and Conchon's (§2): once the representation is
+canonical *and* hash-consed, structural equality of the underlying values comes
+for free, and set equality collapses to a pointer comparison.
+
+---
+
+## 7. Signatures and opcodes
+
+### The idea
+
+§1 wrote a fold and waved at one line of it:
+
+```cpp
+switch (tag.localOpcode()) {
+    case 0: return algebra.Add(x, y);
+    ...
+}
+```
+
+This chapter is that line. The question it answers is narrow and entirely
+practical: **given a node, how does a fold get to the right operation of the
+algebra, in constant time?**
+
+Consider the alternatives a compiler usually settles for. Comparing symbol
+names is a string comparison per node per pass. Comparing interned symbol
+pointers against a list of known constructors is better — one comparison each —
+but still a *linear* scan: a language with 80 constructors averages 40
+comparisons per node, on every node, in every pass. Testing `isSigInput(s)`,
+then `isSigDelay(s)`, then `isSigBinOp(s)` in sequence, which is what large
+compilers accumulate over time, is the same scan wearing a friendlier syntax.
+
+What a `switch` needs instead is a **small dense integer**: 0, 1, 2, … with no
+gaps, so the compiler emits a jump table and the dispatch is one indexed
+branch regardless of how many constructors the language has.
+
+So each constructor symbol is given a number. The difficulty is that TLIB
+hosts *several* languages at once — Faust has signals, boxes, types — and their
+numbers must not collide, while each language wants its own numbering to start
+at 0 and stay dense.
+
+The solution is the one operating systems use for address spaces. Each
+**signature** reserves an aligned block of 256 consecutive numbers, and hands
+its constructors positions 0, 1, 2, … inside it. A constructor's global opcode
+is `base + local`; its local position is recovered by masking off the block,
+which since blocks are aligned is one modulo:
+
+```cpp
+constexpr std::uint8_t localOpcode() const noexcept
+{
+    return static_cast<std::uint8_t>(opcode % kOpcodesPerSignature);
+}
+```
+
+Two languages are then disjoint by construction, each has a dense 0-based
+numbering for its `switch`, and a fold can check in one comparison that the
+node it is looking at belongs to *its* language at all — which is the
+verification §1 said had to happen somewhere.
+
+The last piece is where these numbers live. Not on the tree: there are millions
+of trees and adding a field to `CTree` costs megabytes. They live on the
+**symbol**, which §3 established is unique per name and therefore the natural
+home for anything true of a name. Every tree using that constructor reaches its
+identity through the node it already holds, at no per-tree cost.
+
+### Its role in TLIB
+
+This is the mechanism that makes §1's architecture affordable rather than
+merely elegant.
+
+Without it, "one algebra per analysis" would still work, but each pass would
+pay a linear identification cost per node, and the elegance would be bought
+with a constant factor that grows as the language does. With it, adding a
+constructor to a language costs nothing to the passes that already exist.
+
+It also gives folds their only line of defence. A `Tree` is a universal object
+(§3): nothing in its type says which language it belongs to. Comparing
+`tag.signature` against the algebra's own identity is what turns "this is a
+tree" into "this is a term of my language", and it costs one pointer
+comparison. §1 concluded that conformance is discovered by the fold; §7 is what
+makes that discovery cheap enough to do on every node.
+
+Finally, it keeps TLIB out of its clients' business. The library knows that
+constructors are grouped and numbered. It does not know what they mean, how
+many arguments they take, or which language is which — those stay in the
+client, as §1's non-goals promised.
+
+### More precisely
+
+A signature $S$ reserves an aligned range of $k = 256$ global opcodes:
+
+```math
+\mathrm{range}(S) = [\mathrm{base}(S),\; \mathrm{base}(S) + k - 1],
+\qquad \mathrm{base}(S) \equiv 0 \pmod k
+```
+
+— a contiguous block of 256 numbers starting at a multiple of 256. Bases are
+handed out by a session counter in order of first creation, so the $i$-th
+signature created gets $\mathrm{base} = k \cdot i$, and distinct signatures have
+disjoint ranges.
+
+Within a signature, constructors receive dense local opcodes in order of first
+addition, and the global opcode of a constructor $c$ is
+
+```math
+\mathrm{opcode}(c) = \mathrm{base}(S) + \mathrm{local}(c),
+\qquad \mathrm{local}(c) \in [0, k-1]
+```
+
+— so recovering the local position is $\mathrm{opcode}(c) \bmod k$, and the
+alignment is what makes that modulo a mask rather than a division, and what
+lets it be computed without consulting any table.
+
+Two properties follow, and they are the ones a fold relies on:
+
+- **disjointness** — $\mathrm{signature}(c) = \mathrm{signature}(c')$ whenever
+  $c$ and $c'$ have opcodes in the same range, so one comparison of signature
+  identities decides membership;
+- **density** — the local opcodes of a language with $n$ constructors are
+  exactly $\{0, …, n-1\}$, which is what a jump table requires.
+
+Both are checked in [tour-examples.cpp:194](tour-examples.cpp#L194), together
+with the idempotence of `add` and the fact that an unregistered symbol is
+simply unsigned rather than erroneous.
+
+Note what is *not* claimed. The signature records which symbols are
+constructors of which language; it does not record their arities, and $Σ$ in
+the sense of §1 is therefore only half-represented — the vocabulary without the
+arities. The arities live in the client's algebra interface, where the C++ type
+system checks them, and are verified per occurrence by the fold.
+
+### In the code
+
+The public API is four declarations in
+[symbol.hh:56-83](tlib/symbol.hh#L56-L83) and
+[symbol.hh:167-251](tlib/symbol.hh#L167-L251): the constant
+`kOpcodesPerSignature`, the `SymbolTag` a fold reads, the `Signature` handle,
+and `getSymbolTag`.
+
+Declaring a language is three lines per constructor:
+
+```cpp
+Signature arith = signature("Arithmetic");
+Sym fAdd = arith.add("Arithmetic.Add");   // local opcode 0
+Sym fSub = arith.add("Arithmetic.Sub");   // local opcode 1
+```
+
+`signature(name)` ([symbol.cpp:311](tlib/symbol.cpp#L311)) interns a symbol to
+*identify* the signature — signatures live in the same namespace as everything
+else (§3) — and, on first call only, reserves the next aligned block from
+`gNextSignatureBase` ([symbol.cpp:55](tlib/symbol.cpp#L55)). Calling it again
+with the same name returns a handle to the same block and the same allocation
+state, so a language can be declared across several translation units.
+
+`Signature::add` ([symbol.cpp:342](tlib/symbol.cpp#L342)) is the interesting
+one, and its ordering is deliberate. Every failure is checked *before* anything
+is written:
+
+- capacity is tested before the name is interned, so a rejected 257th
+  constructor does not leave a stray symbol in the table;
+- a symbol already signed by *this* signature is returned unchanged, making
+  `add` idempotent — declaring a language twice is harmless;
+- a symbol signed by *another* signature is an error that changes nothing.
+
+The two fields are assigned only after every validation has passed
+([symbol.cpp:381-383](tlib/symbol.cpp#L381-L383)), so a failed `add` leaves
+neither the signature nor the symbol table modified. That "commit last"
+discipline is what makes the invariants below true even in the presence of
+errors.
+
+Reading the tag is deliberately trivial
+([symbol.hh:241](tlib/symbol.hh#L241)):
+
+```cpp
+inline bool getSymbolTag(Sym sym, SymbolTag& tag)
+{
+    if (!sym) tlib::error("getSymbolTag: null symbol");
+    if (!sym->fSignature) return false;       // an ordinary, unsigned symbol
+    tag = {sym->fSignature, sym->fOpcode};
+    return true;
+}
+```
+
+Two field reads, inlined, on the hot path of every fold. Note the return value:
+an *unsigned* symbol is not an error, it is simply not a constructor of any
+language — most symbols in a session are ordinary.
+
+The state itself is two fields on `Symbol` ([symbol.hh:114-115](tlib/symbol.hh#L114-L115))
+and a session-local registry mapping signature identity to `{base,
+nextLocalOpcode}` ([symbol.cpp:48-55](tlib/symbol.cpp#L48-L55)), cleared at
+`cleanup()` like everything else. The executable version of the whole
+mechanism, fold included, is `checkArithmeticSignatureFold()` in
+[tests.cpp:255](tests.cpp#L255); the full specification is
+[SIGNATURE-SPEC.md](SIGNATURE-SPEC.md).
+
+*Code references verified at `9e26537`.*
+
+### Invariants and non-goals
+
+**A symbol belongs to at most one signature, permanently.** The association and
+the opcode are written once and never change for the rest of the session.
+Constructor identity is therefore a property of the symbol, readable from any
+tree that uses it.
+
+**Ranges are disjoint; local opcodes are dense.** The first 256 distinct
+constructors of a signature get exactly $0…255$; the 257th is rejected. A
+language needing more than 256 constructors needs more than one signature, and
+TLIB does not offer a way to join them.
+
+**Signatures do not create a namespace.** They partition the *opcode* space,
+not the *name* space, and all symbols share one global namespace (§3). Two
+languages cannot both register `Add`; qualifying constructor names by their
+language (`Arithmetic.Add`) is the convention that keeps clients out of each
+other's way.
+
+**Arity is not recorded.** `Signature` says nothing about how many arguments a
+constructor takes; the fold checks it per occurrence, and the client's typed
+interface is what makes that check systematic.
+
+**A failed `add` changes nothing.** Errors are reported through the TLIB error
+handler with no partial state — no half-registered symbol, no consumed opcode.
+
+**The identity symbol is an ordinary symbol.** It can itself be a constructor
+of some signature; the two roles are independent, and nothing prevents a
+program from using the same `Sym` for both.
+
+**Opcodes are session state.** Two sessions assign bases in creation order, so
+a program that declares its languages in a different order gets different
+global opcodes. Nothing should be persisted that depends on their numeric
+values — only on their density and disjointness.
+
+### Origins
+
+The technique is the oldest one in language implementation: replace a name by a
+small integer and dispatch through a table. It is what a bytecode interpreter
+does with its opcodes, what a parser generator does with its token numbers, and
+what the ADJ group's initial-algebra picture (§1) assumes when it treats a
+signature as a finite indexed family — the index *is* the opcode.
+
+The specific arrangement here, aligned blocks with a base and an offset so that
+independent namespaces coexist in one flat numbering, is the same device as
+segmented addressing and as the tagged pointers used in language runtimes:
+reserve aligned regions so that a mask recovers the local part and a comparison
+of bases decides membership. Its appeal is that both operations are single
+instructions.
+
+What is worth taking from this chapter is less the trick than the placement.
+The identity lives on the interned symbol rather than on the term — §3's
+observation that interning creates a natural home for anything true of a name,
+applied once more, and the reason a constructor's identity costs nothing per
+tree.
+
+---
+
+## 8. Recursive terms
+
+### The idea
+
+Every Faust program has feedback in it. A one-pole filter, a delay line, a
+reverb: the output of a signal depends on its own past. Written as an equation
+that is
+
+```text
+x = 1 + x
+```
+
+and the compiler has to represent that. Here is the difficulty, and it is not
+a detail of taste — it is an impossibility.
+
+**Hash-consing builds bottom-up.** To construct `tree(n, a, b)` you must
+already hold `a` and `b`, because the table is looked up by the *addresses* of
+the children. A cyclic term has no bottom: to build the node for `x` you would
+need the node for `1 + x`, which needs the node for `x`. There is no order in
+which `tree()` can be called. Whatever else recursion is going to be, it cannot
+be a cycle through branches.
+
+TLIB offers two representations, and the interesting part is that it needs both.
+
+**The de Bruijn form makes the cycle a binder and an index.** Instead of a
+variable pointing back at its definition, a node marks *where the recursion
+starts* and a reference says *how many binders up* to look:
+
+```cpp
+Tree r = rec( tree(symbol("+"), tree(1), ref(1)) );   // x = 1 + x
+```
+
+`rec` binds, `ref(1)` refers to the nearest enclosing binder. The term is
+finite, acyclic, and an ordinary tree in every respect — so hash-consing works
+on it unchanged. What makes this representation valuable is a second property
+that comes free: **there are no names at all**. Two recursions that differ only
+in the name of their variable are not merely equivalent, they are *the same
+term*, hence the same pointer. Alpha-equivalence, which is usually a traversal,
+becomes a pointer comparison.
+
+**The symbolic form gives the variable a name**, because that is what a
+compiler wants to read, print, schedule and generate code from:
+
+```cpp
+Tree x = tree(symbol("X"));
+Tree r = rec(x, tree(symbol("+"), tree(1), ref(x)));   // X = 1 + X
+```
+
+And here is the trick that makes it possible at all, the one worth stopping on.
+Look at how the two are built:
+
+```cpp
+Tree ref(Tree id)            { return tree(gSymRecSym, id); }
+Tree rec(Tree id, Tree body) { Tree t = tree(gSymRecSym, id);
+                               t->setProperty(recdefKey(), body); return t; }
+```
+
+They construct **the same node**. `rec(id, body)` *is* `ref(id)`, with the body
+attached as a **property** (§5) rather than as a branch. The definition does not
+participate in the node's identity, is not looked up by the hash-consing table,
+and — crucially — does not have to exist when the node is built.
+
+That is how the cycle is squared. The branches of a TLIB tree remain a finite
+acyclic structure, exactly as §3's `Tree = N × Tree*` requires; the cycle lives
+in the *property graph* layered on top. A traversal that follows branches
+terminates naturally at a recursive node and simply does not see the loop; a
+traversal that wants to enter the recursion asks for the property explicitly.
+Recursion became visible only where it is wanted.
+
+### Its role in TLIB
+
+Recursion is what the library is ultimately for. A Faust program is a system of
+mutually recursive signal equations, and every later stage — typing, interval
+analysis, scheduling, code generation — is a computation over recursive terms.
+
+Three things this chapter establishes are used everywhere downstream.
+
+**The de Bruijn form is the canonical form.** §2 said that identifying terms up
+to a coarser equivalence has to be arranged by *construction*, by building a
+canonical representative and letting structural sharing do the work. This is
+that strategy carried out: alpha-equivalent recursions converge on one term,
+and everything already true of shared terms — pointer equality, memoisation,
+one traversal per distinct subterm — becomes true modulo alpha-equivalence at
+no extra cost.
+
+**The symbolic form is canonical too, which is less obvious.** `deBruijn2Sym`
+does not invent fresh names; it derives each variable's name from the
+*canonical hash of the de Bruijn group it names*. Two alpha-equivalent
+recursions therefore receive the same variable name, and their symbolic forms
+collide in the hash-consing table — fusion for free. Converting the same term
+twice returns the same pointer.
+
+**Recursion is what breaks the fold.** §1's fold recurses into children and
+stops at leaves; §5 memoises it. Neither survives contact with a term whose
+meaning is an infinite unfolding: there is no base case, and the value of a
+node can depend on itself. That is not a gap in this chapter, it is the
+statement of the next two — §9 for transforming such terms, §10 for computing
+attributes over them.
+
+### More precisely
+
+A recursive term denotes an infinite tree. Not an arbitrary one: an infinite
+tree with **finitely many distinct subtrees**, which is called a *rational* or
+*regular* tree. The finite syntax and the infinite denotation are related by
+unfolding, written with the fixed-point binder the earlier chapters kept in
+reserve:
+
+```math
+μx.\,(1 + x) \;=\; 1 + (1 + (1 + \cdots))
+```
+
+— the term on the left is finite and is what TLIB stores; the tree on the right
+is what it means, and is never built. §3's carrier is untouched: the equation
+$\mathrm{Tree} = N × \mathrm{Tree}^{*}$ still describes finite trees of finite
+depth, and this chapter adds two ordinary constructors to the signature rather
+than a new kind of object.
+
+The de Bruijn representation replaces a bound variable by the number of binders
+between the reference and its binder, so no names appear. The bookkeeping is
+one synthesized attribute, the **aperture**, computed at construction
+(§2) by three rules:
+
+```math
+a(\mathrm{ref}(k)) = k
+\qquad
+a(\mathrm{rec}(b)) = a(b) - 1
+\qquad
+a(c(t_1,…,t_n)) = \max_i a(t_i)
+```
+
+— a reference contributes its own level; a binder discharges one level; any
+other node takes the deepest of its children. A term is **closed** when
+$a(t) ≤ 0$, meaning every reference is matched by an enclosing binder, and
+**open** otherwise. Because the attribute is stored on the node, the test is
+$O(1)$ rather than a traversal.
+
+The two representations are related by two conversions. Writing $\mathcal{D}$
+for `deBruijn2Sym` and $\mathcal{S}$ for `sym2deBruijn`, the property that
+matters is that $\mathcal{D}$ is a **function of the term's value**, not of its
+history:
+
+```math
+t = t' \;\Longrightarrow\; \mathcal{D}(t) = \mathcal{D}(t')
+\quad\text{(as pointers, both sides)}
+```
+
+— which holds because the name $\mathcal{D}$ gives to a variable is computed
+from the canonical hash (§2) of the closed, name-free de Bruijn group it binds.
+Equal groups get equal names, equal names give equal symbolic terms,
+hash-consing gives one pointer. This is the precise sense in which
+"alpha-equivalent recursive terms are the same pointer in both
+representations", and it is checked, along with the identity of `rec` and
+`ref`, in [tour-examples.cpp:234](tour-examples.cpp#L234).
+
+One consequence of deriving a name from a hash deserves to be stated rather
+than hidden: two structurally *different* groups whose 64-bit canonical hashes
+collide would receive the same variable name. That is not a silent corruption —
+the second group would attempt to define an already-defined variable with a
+different body, which the protocol below makes a fatal error.
+
+### In the code
+
+Everything lives in [recursive-tree.cpp](tlib/recursive-tree.cpp), with the API
+in [tree.hh:415-490](tlib/tree.hh#L415-L490).
+
+The de Bruijn constructors are one line each
+([recursive-tree.cpp:175-190](tlib/recursive-tree.cpp#L175-L190)): `rec(body)`
+is `tree(gDebruijnSym, body)` and `ref(level)` is a node holding an integer
+level, asserted positive. The symbolic pair
+([recursive-tree.cpp:202-232](tlib/recursive-tree.cpp#L202-L232)) is where the
+design shows, and the comment in `scanForRecs` states it flatly: *"rec and ref
+are the same node in symbolic form"*.
+
+That identity forces a protocol, because it punches a hole in §2's
+immutability. Branches are immutable; **properties are not**. A symbolic
+recursive node is hash-consed by its *name*, so calling `rec(id, body')` a
+second time with a different body would silently change what every existing
+holder of that pointer means. The rules
+([tree.hh:428-445](tlib/tree.hh#L428-L445), enforced at
+[recursive-tree.cpp:205-217](tlib/recursive-tree.cpp#L205-L217)) are therefore:
+
+- `ref(id)` creates the node with no definition;
+- the first `rec(id, body)` fills it;
+- `rec(id, body)` again with the **same** body is an idempotent no-op — which
+  is what lets a hash-consed reconstruction pass through unchanged;
+- a **different** body is a redefinition, and erasing a definition is an
+  erasure: both are fatal, with no override.
+
+The consequence for every transformation in the library is spelled out in the
+same comment: *a transformation never redefines, it maps every variable to a
+fresh one*. §9's rewriting is built on that rule.
+
+`calcTreeAperture` ([recursive-tree.cpp:263](tlib/recursive-tree.cpp#L263))
+implements the three rules above, and is called once per node from the `CTree`
+constructor. Alongside it, `calcTreeContains`
+([recursive-tree.cpp:315](tlib/recursive-tree.cpp#L315)) synthesizes the
+`kContainsRec` bit — "a recursive node occurs here or below" — whose negation
+`isRecFree()` is a genuinely useful shortcut: a term with no recursive node
+reconstructs to itself, and a bottom-up fold over it reaches its final value in
+a single pass and can never change during a fixpoint iteration (§10). The
+comment there also records a soundness argument worth reading: the recursion
+symbols are null before initialisation, so a tree built earlier gets the bit
+clear — correct rather than racy, since building a recursive node requires
+passing one of those symbols to `tree()`.
+
+`deBruijn2Sym` ([recursive-tree.cpp:418](tlib/recursive-tree.cpp#L418))
+requires a closed term and walks it with a memo. Its heart is `contentVar`
+([recursive-tree.cpp:451](tlib/recursive-tree.cpp#L451)):
+
+```cpp
+snprintf(buf, sizeof(buf), "D%016zx", static_cast<size_t>(dbj->canonHash()));
+return tree(symbol(buf));
+```
+
+The variable is *named after the content it binds*. A cached variant,
+`deBruijn2SymCached`, stores the result as a property so a repeated conversion
+of the same term costs a lookup.
+
+`sym2deBruijn` ([recursive-tree.cpp:809](tlib/recursive-tree.cpp#L809)) is the
+harder direction and the most engineered function in the library, because
+mutual recursion has to be handled with a single-binder notation. It is
+organised around the **strongly connected components** of the dependency graph
+between recursive variables — Tarjan's algorithm, taken from the
+[DirectedGraph](DirectedGraph/) library rather than hand-written. A recursive
+node of the component being converted is inlined by extending the environment;
+a node of any *other* component is converted separately into a closed term and
+reused. Two memos rather than one make this affordable: closed results are
+keyed by term alone, open ones by (term, environment), so environments stay
+small and shared closed sub-DAGs are converted exactly once.
+
+Two ways to test alpha-equivalence coexist, and the header is honest about
+which to use ([tree.hh:486-491](tlib/tree.hh#L486-L491)): `areEquiv` converts
+both sides and compares, which is the theorem but is super-linear on large
+nests; `alphaEquiv` ([recursive-tree.cpp:902](tlib/recursive-tree.cpp#L902)) is
+a pair-memoised walk carrying a variable bijection, linear in distinct pairs,
+and is what validations should call.
+
+Finally `canonicalizeRecNames` ([recursive-tree.cpp:961](tlib/recursive-tree.cpp#L961))
+renames a term's recursive groups in dependency order as `R<instance>_<k>`. It
+is *not* a canonical form and [tree.hh:541-557](tlib/tree.hh#L541-L557) says so
+carefully: the instance prefix is fresh per call, so alpha-equivalent inputs
+give alpha-equivalent — not pointer-equal — results. What *is*
+instance-independent is the resulting **order**, because `fCanonKey` (§3)
+strips the instance from those names. For a true canonical form, `deBruijn2Sym`
+is the function to call.
+
+*Code references verified at `9e26537`.*
+
+### Invariants and non-goals
+
+**A recursive definition is immutable once given.** Redefining a symbolic
+variable with a different body, or erasing its definition, is fatal. This is
+not configurable, and the transition regime that once tolerated it is over.
+Transformations allocate fresh variables instead.
+
+**The cycle is in the properties, not in the branches.** A traversal that
+follows `branch(i)` never loops, and never enters a recursive definition — it
+stops at the recursive node. That is a feature (termination is free, §2's
+finite carrier is preserved) and a trap: code that must see through the
+recursion has to fetch the definition explicitly, and code that assumes
+"visiting all branches visits the whole term" is wrong on recursive terms.
+
+**`deBruijn2Sym` requires a closed term.** An open de Bruijn term — one with a
+free reference — has no symbolic meaning, and the conversion asserts rather
+than guessing.
+
+**Canonicity is a property of `deBruijn2Sym`, not of every renaming.** Same
+term in, same pointer out, because names are derived from content.
+`canonicalizeRecNames` gives a canonical *order*, not a canonical *term*.
+Confusing the two is the likeliest misreading of this chapter.
+
+**Hash collisions are detected, not tolerated.** Content-derived names rest on
+a 64-bit hash; a collision between structurally different groups surfaces as a
+fatal redefinition, never as two different terms silently sharing a name.
+
+**Aperture is a de Bruijn notion only.** Symbolic references count as zero, so
+`isClosed` says nothing about whether a symbolic term's variables are all
+defined. That is a different question, and the answer lives in the definition
+properties.
+
+**Nothing here decides what a recursive term *means*.** The signature gives the
+syntax; the semantics of the fixed point — least, greatest, or an iteration
+that must be made to converge — is the client's, and §10 is the machinery for
+computing it.
+
+### Origins
+
+The nameless representation is Nicolaas Govert de Bruijn's, in *Lambda calculus
+notation with nameless dummies, a tool for automatic formula manipulation, with
+application to the Church-Rosser theorem* (Indagationes Mathematicae 34, 1972).
+The paper's motivation is exactly the one this chapter gives: alpha-equivalence
+makes syntactic identity useless for mechanical manipulation, and removing
+names restores it. What TLIB adds is the observation that *syntactic identity
+plus hash-consing is pointer identity*, so the benefit is not merely
+conceptual — it is O(1) equality and automatic sharing of alpha-equivalent
+recursions.
+
+The objects being denoted are **rational trees**: infinite trees with finitely
+many distinct subtrees. Bruno Courcelle's *Fundamental Properties of Infinite
+Trees* (Theoretical Computer Science 25(2), 1983) is the reference for their
+theory — unfolding, the equivalence of systems of equations with their
+solutions, and why regularity is exactly the condition that makes finite
+representation possible. They reached practice through Prolog II, where Alain
+Colmerauer replaced unification's occurs-check with unification over rational
+terms, precisely so that cyclic structures could be first-class.
+
+The conversion out of the symbolic form uses Robert Tarjan's *Depth-First
+Search and Linear Graph Algorithms* (SIAM Journal on Computing 1(2), 1972) to
+find the mutually recursive groups. That a 1972 graph algorithm and a 1972
+notation for binders meet inside one function is a fair summary of what this
+chapter is: recursion is a graph problem wearing the clothes of syntax.
+
+---
+
+## 9. Rewriting
+
+### The idea
+
+A fold (§1) turns a term into a value of some other domain. Very often what a
+compiler wants instead is a term into *another term*: constant folding,
+simplification, normalisation, substitution, lowering. That is a fold whose
+target algebra is the syntax algebra itself — and §1 already told us what
+happens then, since folding into the term algebra rebuilds the term. To *change*
+something, you apply a local rule to each rebuilt node:
+
+```cpp
+Tree simplified = treeRewrite(t, [](Tree n) {
+    Tree x, y;
+    int  a, b;
+    if (isTree(n, symbol("Add"), x, y) && isInt(x->node(), &a) && isInt(y->node(), &b))
+        return tree(a + b);        // fold two constants
+    return n;                      // no local change
+});
+```
+
+The rule sees a node whose children have *already been rewritten*, and returns
+either a replacement or the node itself. That is the whole interface.
+
+What makes this worth a chapter is that the obvious implementation is wrong in
+three separate ways on TLIB's trees, and each correction is instructive.
+
+**Sharing.** A recursive walk that rebuilds every node visits a shared subterm
+once per occurrence. §2 showed the gap can be exponential, so the traversal
+must memoise — and here memoisation is not an optimisation but the difference
+between a compiler that finishes and one that does not.
+
+**Minimal reconstruction.** If a rule changes nothing in a subterm, the rebuilt
+node should be *the same pointer*, not an equal copy. Hash-consing already
+guarantees an equal copy would be the same pointer — but only if you rebuild
+it, which costs a table lookup per node. Checking whether any child actually
+changed avoids that, and lets an unchanged subtree be returned untouched.
+
+**Recursion.** A rewrite must cross recursive definitions, which live in
+properties (§8), not in branches. And it cannot simply rebuild a recursive node
+in place: the definition of a symbolic variable is immutable, so writing a new
+body under the same variable is the redefinition §8 makes fatal. The only
+correct discipline is to allocate a **fresh variable** for every recursive
+definition traversed — which means that rewriting with the identity rule
+returns a term that is alpha-equivalent to its input, not equal to it.
+
+### Its role in TLIB
+
+Rewriting is the *write* half of the library, where the previous chapters were
+mostly about reading. Every transformation a Faust compilation performs —
+normalising signal expressions, substituting, lowering to a form the code
+generator accepts — is a `treeRewrite` with a different rule.
+
+Its architectural value is the same as the fold's: the traversal, the sharing,
+the memoisation, the recursion discipline and the minimal reconstruction are
+written once and correct once. A client writes a rule of a dozen lines, and
+inherits behaviour on cyclic shared graphs that is genuinely difficult to get
+right.
+
+It is also where §5's warning comes due. A property attached to a node is a
+fact about *that* node; a rewrite produces new nodes, which carry no
+annotations. So a pass that consults types or intervals must run *before* the
+rewrite, and anything the rewrite invalidates must be recomputed after it. The
+specification states the rule as **rewrite, then re-annotate** — including the
+fixed points of §10, which have to be re-run on the result.
+
+### More precisely
+
+The basic traversal is the **congruence closure** of a local rule: rewrite the
+children, rebuild, apply the rule once to the rebuilt node. In inference-rule
+form, as the header itself writes it:
+
+```math
+\dfrac{\text{rule} ⊢ t_i ⇒ u_i \quad (\text{for every } i)}
+      {\text{rule} ⊢ f(t_1,…,t_n) ⇒ \text{rule}⟦\,f(u_1,…,u_n)\,⟧}
+```
+
+— to rewrite a node, rewrite each child, reassemble, and apply the rule to the
+result. The memo makes the judgment $t ⇒ u$ computed once per *pointer*, which
+turns a tree rewrite into a **DAG rewrite**.
+
+For a recursive definition the rule is not applied at all; the traversal
+alpha-renames:
+
+```math
+\dfrac{\text{body}[\mathrm{var} := \mathrm{var}'] ⇒ \text{body}'}
+      {\mathrm{rec}(\mathrm{var}, \text{body}) ⇒ \mathrm{rec}(\mathrm{var}', \text{body}')}
+```
+
+— a fresh variable, a rewritten body, and the memo bound to the new reference
+*before* descending, so that recursive occurrences encountered inside the body
+already have a target. This is the step that makes rewriting a cyclic structure
+terminate: the cycle is cut by an entry in the memo.
+
+The guarded variant exists because some rules have a premise that is a
+**judgment about the source term** rather than a property of its shape — a
+type, an interval, any annotation computed by a previous analysis:
+
+```math
+\dfrac{Γ ⊢ t : [k,k]}{t → k}
+```
+
+Such a premise cannot survive reconstruction: once the children have been
+rewritten, the rebuilt node is a fresh tree carrying no judgment, and the rule
+can never fire. It must therefore be tried *before* descending, on the original
+node. Hence a second pair of rules, with a top-down guard `pre` and a bottom-up
+rule `post`:
+
+```math
+\dfrac{\text{pre}⟦t⟧ = \mathrm{some}(c)}{t ⇒ c}
+\qquad
+\dfrac{\text{pre}⟦t⟧ = \mathrm{none} \quad t_i ⇒ u_i}
+      {t ⇒ \text{post}⟦\,f(u_1,…,u_n)\,⟧}
+```
+
+— when the guard fires, the subtree is replaced wholesale and its children are
+never visited; otherwise the ordinary congruence applies. The priority of the
+guard over the descent is *part of the semantics*, not an optimisation: without
+it the rewrite is lost, not merely delayed.
+
+### In the code
+
+[rewrite.hh](tlib/rewrite.hh) is a header-only file whose comments are, unusually,
+a specification — the inference rules above are transcribed from it. The core is
+`treeRewriteMemo` ([rewrite.hh:64](tlib/rewrite.hh#L64)), some forty lines that
+handle all three difficulties.
+
+The recursive case ([rewrite.hh:74-86](tlib/rewrite.hh#L74-L86)) is the one to
+read closely:
+
+```cpp
+Tree newVar = tree(unique("W"));
+memo[t]      = ref(newVar);                        // cut the cycle, before descending
+Tree newBody = treeRewriteMemo(body, rule, memo);
+return rec(newVar, newBody);
+```
+
+Three chapters converge in four lines. `unique("W")` is §3's gensym, giving the
+fresh variable §8's immutability protocol demands. `memo[t] = ref(newVar)` is
+what makes a cyclic traversal terminate — and it is *final* rather than
+provisional, because §8 established that `ref(newVar)` and
+`rec(newVar, newBody)` are the same hash-consed pointer. And the assertion just
+above it catches a caller error the type system cannot: a symbolic reference
+whose variable was never defined arrives here with a null body.
+
+The ordinary case ([rewrite.hh:88-102](tlib/rewrite.hh#L88-L102)) implements
+minimal reconstruction explicitly:
+
+```cpp
+for (int i = 0; i < ar; i++) {
+    br[i]   = treeRewriteMemo(t->branch(i), rule, memo);
+    changed = changed || (br[i] != t->branch(i));
+}
+if (changed) { r = tree(t->node(), br); }
+```
+
+`changed` is a pointer comparison, which is §2 being spent well: detecting that
+a rewritten child is identical to the original costs one instruction, and
+saves a hash-consing lookup for every node of every unchanged subtree.
+
+Note also what the traversal does *not* do: it attaches no property to the
+trees it visits. The memo is local to the call
+([rewrite.hh:105-108](tlib/rewrite.hh#L105-L108)), which is a deliberate reversal of §5's
+usual advice — and the reason is the pathology §5 reported. A rewrite keyed by
+a fresh property per call is exactly how one real Faust node came to carry tens
+of thousands of properties; a local `unordered_map` that dies with the call
+does the same job without polluting the nodes.
+
+Two further families sit on the same traversal. The **guarded** variant
+([rewrite.hh:315](tlib/rewrite.hh#L315)) takes `pre` and `post` as above, with
+the plain form documented as exactly the guarded form whose guard always
+returns `nullopt` — a pleasant way to specify one function in terms of another.
+The **paired** family, `treeRewritePaired`
+([rewrite.hh:191](tlib/rewrite.hh#L191)), passes the rule *both* trees —
+`rule(original, rebuilt)` — so a transformation can consult annotations carried
+by the original while building from rewritten children, and exposes its memo so
+that nested arguments can be matched with their transforms. The full
+specification of both is [REWRITE-SPEC.md](REWRITE-SPEC.md).
+
+*Code references verified at `9e26537`.*
+
+### Invariants and non-goals
+
+**Rewriting a recursive term renames it.** Under the identity rule the result
+is alpha-equivalent to the input, not pointer-equal — `areEquiv`, not `==`.
+This surprises everyone once, so it is pinned by a test
+([tour-examples.cpp:317](tour-examples.cpp#L317)), next to the non-recursive
+case where the identity rule does return the very same pointer. It is forced by §8: reusing the variable would be
+a redefinition, and the in-place variant that once did so was removed for
+exactly that reason.
+
+**The rule is never applied to recursive nodes.** `treeRewrite` traverses a
+definition through its body and handles the binder itself, so a rule that
+expects to see `rec` nodes will never fire on one.
+
+**Annotations do not survive a rewrite.** New nodes carry no properties, and
+the judgments a guard consulted are stale for the result. Rewrite, then
+re-annotate — including re-running any fixed point of §10. Nothing enforces
+this ordering.
+
+**The guard has priority over the descent, by definition.** When `pre` fires,
+children are never visited and `post` is not applied to the replacement.
+`pre(t)` returning `t` itself is how one says "keep this subtree verbatim, do
+not enter it".
+
+**One rule application per rebuilt node, not to fixpoint.** `treeRewrite`
+applies the rule exactly once per node; it does not re-apply until nothing
+changes. A rule that produces a redex its own pass would rewrite must either
+handle that itself or be run again by the caller.
+
+**The memo is per call.** Two rewrites with the same rule share nothing, and a
+rewrite performed twice does the work twice. Memoising *across* calls is the
+caller's business, and §5 is where to do it — with the property-count pathology
+in mind.
+
+**Termination is guaranteed for the traversal, not for the rules.** The
+traversal always terminates, even on cyclic terms, because of the memo. A rule
+that rewrites a node into something containing a fresh redex can still diverge
+if the caller iterates it.
+
+### Origins
+
+The framework is **term rewriting**, whose standard reference is Franz Baader
+and Tobias Nipkow's *Term Rewriting and All That* (Cambridge University Press,
+1998): rules, congruence closure, confluence and termination. TLIB implements
+one specific strategy — innermost, one pass, one application per node — and
+deliberately provides none of the theory's machinery for reaching a normal
+form, leaving that to the caller.
+
+Rewriting a *shared graph* rather than a tree is the older subject of **term
+graph rewriting**, surveyed in Barendregt et al., *Term Graph Rewriting*
+(PARLE, 1987). The distinction matters exactly as this chapter describes it:
+rewriting a DAG in place means one rewrite serves every occurrence, and the
+memo here is what turns the tree semantics into the graph one.
+
+For the guarded variant the ancestry is different: a rule with a premise
+discharged by a prior judgment is a **conditional rewrite rule**, and the
+observation that such a premise must be checked before the congruence descent
+— because reconstruction destroys the evidence — is the practical form of the
+well-known awkwardness of type-directed transformations. The library's answer,
+that priority is part of the semantics rather than a scheduling choice, is
+stated in the specification rather than left to be discovered.
+
+---
+
+## 10. Fixed points
+
+### The idea
+
+§1 promised that every analysis is a fold. §8 broke the promise: a recursive
+term has no base case, and the value of a node can depend on its own value.
+Ask a fold for the type of `x = 1 + x` and it recurses forever.
+
+The classical answer is to stop asking for *the* value and start computing
+**successive approximations**. Guess something for `x`, evaluate the body with
+that guess, and use the result as the next guess:
+
+```text
+x₀ = ⊥            (nothing known yet)
+x₁ = 1 + x₀
+x₂ = 1 + x₁
+…
+```
+
+If the guesses stop changing, the last one is a **fixed point** — a value that
+the equation maps to itself, and therefore a consistent answer for the
+recursion. The whole chapter is about making that idea terminate in a compiler.
+
+Three difficulties stand in the way, and TLIB's iterator answers each.
+
+**It may not converge at all.** For an interval analysis on `x = x + 1` the
+approximations grow forever: $[0,0], [0,1], [0,2], …$. The cure is
+**widening**: after a few honest iterations, when a value keeps growing, jump
+deliberately to something bigger — often $[0, +∞)$ — so the sequence stabilises.
+It is a controlled loss of precision, exchanged for termination.
+
+**Widening overshoots.** Having jumped to $[0, +∞)$ you may be able to come back
+part of the way: re-evaluating from a stable point sometimes yields something
+tighter that is still consistent. That descending pass is **narrowing**, and it
+is bounded, because it is a recovery of precision and not a correctness
+requirement.
+
+**Some answers are better guessed than derived.** For certain domains a good
+candidate is known in advance — *this filter's output is non-negative* — and
+checking a guess is far cheaper than deriving it. The iterator therefore offers
+a third regime, a **descending probe**: seed the whole recursive group with a
+candidate, take one step, and if the result is no larger than the seed, the
+seed was a valid answer.
+
+Around all this sits one structural decision. A program's recursive variables
+form a dependency graph, and its **strongly connected components** are the
+groups that must be solved together (§8's Tarjan machinery again). Components
+are solved in dependency order, so by the time a group is iterated, everything
+it depends on is already settled — and only genuinely mutual recursion pays the
+cost of iteration.
+
+### Its role in TLIB
+
+This is where TLIB stops being a data structure library and becomes a compiler
+substrate. Faust's type inference, its interval analysis, its vectorisability
+and computability judgments are all attributes over recursive signal terms, and
+all of them are this iterator with a different domain.
+
+The division of labour is the same one §1 set up, extended to the recursive
+case. The **iterator** knows about terms: it walks lists, `rec`, `ref` and
+`proj`, finds the components, runs the ascending and descending regimes, and
+memoises. The **domain** knows about values: what `⊥` and `⊤` are, how to
+compare them, and how to combine a constructor with its children's values. The
+header says it plainly — the iterator is *temporal-blind*, it never takes a
+union of values; a delay's temporal union lives in the domain's own rule.
+
+So a new analysis over recursive terms costs one class implementing
+`FixPointDomain<V>` — exactly as a new analysis over finite terms cost one
+algebra in §1. That is the chapter's real content: the fold survives recursion,
+at the price of a lattice and an iteration strategy.
+
+### More precisely
+
+Let $V$ be the attribute domain, ordered by $⊑$ — read $x ⊑ y$ as "$x$ is at
+least as precise as $y$", with $⊥$ the least element and $⊤$ the greatest. A
+recursive group of $n$ variables induces a function
+
+```math
+F : V^n → V^n
+```
+
+— evaluate each variable's body under an assignment of values to all the
+variables of the group, and collect the results. A **fixed point** is an
+assignment with $F(X) = X$; a **post-fixed point** is one with $F(X) ⊑ X$,
+which is the weaker and more useful notion, since any post-fixed point is a
+sound over-approximation.
+
+The ascending regime is **Kleene iteration**: start at $⊥$ and apply $F$ until
+nothing moves.
+
+```math
+X_0 = ⊥^n, \qquad X_{k+1} = F(X_k)
+```
+
+— which converges when the domain has no infinite ascending chains, and does
+not otherwise. Intervals over the integers have such chains, which is exactly
+the case that needs help.
+
+**Widening** replaces the update by an operator $∇$ that must satisfy two
+conditions: $x ⊑ x ∇ y$ and $y ⊑ x ∇ y$ (it over-approximates both arguments),
+and any sequence built with it stabilises after finitely many steps. Applied
+after a threshold, it turns a divergent ascent into a terminating one at the
+cost of precision.
+
+**Narrowing** then iterates $F$ *without* widening from the post-fixed point
+reached. Each step of $F$ applied to a post-fixed point is again a post-fixed
+point, so every intermediate result stays sound and one may stop at any time —
+which is why the number of narrowing steps is a tunable and not a correctness
+parameter.
+
+The **probe** is the same idea used as a certificate rather than a computation.
+Given a candidate $P$ for the whole component, if
+
+```math
+F(P) ⊑ P
+```
+
+then $P$ is a post-fixed point and therefore sound. One application of $F$
+decides it. Note the quantifier: the certificate is required on the *whole
+product*, every branch of every variable of the component, not branch by
+branch — a component either certifies or it does not.
+
+Finally, the iterator computes over **components in dependency order**. Within
+one component it uses a *Jacobi* update: freeze the current assignment, compute
+every branch against that frozen snapshot, then swap. Updating in place
+(Gauss-Seidel) would converge at least as fast, but the result could depend on
+the order the variables happen to be visited in; freezing makes each round a
+function of the previous round alone.
+
+### In the code
+
+[fixpoint.hh](tlib/fixpoint.hh) is header-only and organised around two
+interfaces the client implements or receives.
+
+`FixPointDomain<V>` ([fixpoint.hh:66](tlib/fixpoint.hh#L66)) is the lattice.
+Its defaults are worth reading as a design statement: they define an **exact**
+domain — converge by equality, never widen, no cap, no narrowing, no probe — so
+a domain with no infinite chains implements four methods (`bottom`, `top`,
+`combine`, `lessEqual`) and nothing else. Approximation is opt-in, added by
+overriding `widenAfter()`, `widen()` and optionally `probeSeeds()`.
+
+`combine` is declared `const`, and the comment explains why in terms this tour
+has been using since §1: *an algebra is a DENOTATION, not a process* — a node's
+value depends on its constructor and its children's values, on nothing else.
+State that is genuinely needed is declared `mutable`, which says precisely that
+it is not part of the denotation. That is §5's memoisation invariant, restated
+as a C++ signature.
+
+`FixPointEvaluator<V>` ([fixpoint.hh:56](tlib/fixpoint.hh#L56)) is the handle
+the iterator passes *into* `combine`, letting a constructor ask for the value of
+any subtree rather than only receiving its direct branches. The motivation is
+concrete: a Faust slider keeps its four range signals in a nested list, so its
+node has two branches while the operation it denotes takes five arguments.
+Asking costs nothing extra, since values are memoised either way.
+
+The solver itself ([fixpoint.hh:286-311](tlib/fixpoint.hh#L286-L311)) is the
+two-phase regime, readable almost as pseudocode:
+
+```cpp
+do {                                                  // Phase 1 : ascending Kleene
+    ++iteration;
+    const bool applyWiden = iteration > fDomain.widenAfter();
+    done = jacobiStep(members, approx, applyWiden);
+} while (!done && iteration < fDomain.maxIterations());
+
+if (!done) {                                          // guard-rail : the only sound
+    ... row[b] = fDomain.top(proj(b, x));             // fallback is top
+} else if (fDomain.widenAfter() < INT_MAX) {
+    while (!ndone && narrow < fDomain.maxNarrowingIterations()) {
+        ndone = jacobiStep(members, approx, /*applyWiden*/ false);   // Phase 2
+    }
+}
+```
+
+Two details in it are worth the reader's attention. The iteration cap is a
+**guard-rail, not a strategy**: if the ascent has not converged when the cap is
+reached, the only sound thing to report is `top`, and that is what happens —
+losing all precision rather than reporting an unsound value. And the narrowing
+phase only runs for domains that widen, since an exact domain has nothing to
+recover.
+
+`jacobiStep` ([fixpoint.hh:402](tlib/fixpoint.hh#L402)) is the frozen-snapshot
+round described above; the comment `fCurrentApprox = approx; // frozen : eval
+reads only this during the round` is the whole of the Jacobi discipline.
+
+`probeComponent` ([fixpoint.hh:325](tlib/fixpoint.hh#L325)) implements the
+third regime, with one refinement over the sketch above: a domain supplies an
+*ordered list* of seed candidates, tried until one certifies, so an analysis can
+fall back from a strong certificate to a weaker one — the interval domain tries
+positivity $[0, \mathrm{BIG}]$ first, then the symmetric
+$[-\mathrm{BIG}, \mathrm{BIG}]$ that a contracting signed loop such as a plucked
+string still satisfies. The probe *informs*, it never writes the settled values.
+
+Underpinning all of it is the memo, and its three classes are where §8's
+synthesized bits pay off. A subterm free of recursive nodes — `isRecFree()`,
+one bit read — reaches its final value in one pass and is memoised **for
+good**. A value belonging to an already-settled component is likewise
+permanent. Only values that depend on the component being iterated are
+*moving*, and only those are discarded between rounds. The plan itself comes
+from `RecPlan` ([tree.hh:515](tlib/tree.hh#L515)), memoised one per root per
+session, so repeated analyses of the same term share one Tarjan run.
+
+*Code references verified at `9e26537`.*
+
+### Invariants and non-goals
+
+**The iterator computes a post-fixed point, not necessarily the least one.**
+With widening it is deliberately not the least. Soundness means the answer
+over-approximates the true value; precision is a separate, best-effort concern.
+
+**The domain owes the iterator a real lattice.** `lessEqual` must be a partial
+order and `bottom`/`top` its bounds; `widen` must over-approximate both
+arguments and must stabilise every chain. Nothing checks this, and a `widen`
+that merely returns the fresh value — the default — makes the iterator
+non-terminating on a domain with infinite chains rather than incorrect.
+
+**Reaching the iteration cap is a precision failure, not an error.** The result
+is `top` for every branch of the component: sound, useless, and silent. A
+domain that cares should make its cap generous or track how often it is hit.
+
+**The iterator never unions values.** It is temporal-blind: it walks the term
+structure and delegates every value decision to `combine`. An analysis whose
+recursion needs a union at a delay must put it in its own delay rule.
+
+**Values are memoised in three classes, and only one is invalidated.** A value
+below a recursive node that is currently moving is recomputed each round;
+everything else is permanent for the session. A domain whose `combine` is *not*
+a pure function of node and children's values breaks this silently — the same
+invariant as §5, now with iteration to amplify it.
+
+**Fixed points are computed over the symbolic form.** The iterator walks `rec`,
+`ref` and `proj`, so the input is a symbolic recursive term (§8), not a de
+Bruijn one.
+
+**Nothing survives a rewrite.** §9's rule applies here too: a rewritten term is
+made of new nodes, so its attributes must be recomputed — including re-running
+this fixed point.
+
+### Origins
+
+The ascending regime is **Kleene iteration**, from the fixed-point theorem of
+Knaster and Tarski — Alfred Tarski's *A lattice-theoretical fixpoint theorem and
+its applications* (Pacific Journal of Mathematics 5(2), 1955) is the standard
+citation, and it is the same result that gives §8's recursive terms their
+meaning as least fixed points.
+
+Widening and narrowing are Patrick and Radhia Cousot's, introduced with
+**abstract interpretation** in *Abstract interpretation: a unified lattice model
+for static analysis of programs by construction or approximation of fixpoints*
+(POPL, 1977), and developed in *Comparing the Galois connection and
+widening/narrowing approaches to abstract interpretation* (PLILP, 1992). The
+framing this chapter uses — a sound over-approximation obtained by iterating in
+an abstract domain, with widening to force termination and narrowing to recover
+precision — is theirs entirely. Faust's interval analysis is an abstract
+interpretation in the strict sense of that paper.
+
+The component-wise organisation is folklore in dataflow analysis and rests
+again on Tarjan (§8): solving strongly connected components in dependency order
+is what keeps iteration confined to genuinely mutual recursion. The choice of a
+Jacobi rather than Gauss-Seidel update trades speed for order-independence, a
+trade a compiler that must be deterministic (§2) has good reason to make.
+
+---
+
+## 11. Optional modules
+
+### The idea
+
+Two small modules ship with TLIB and are used by Faust, but nothing in the core
+depends on them: remove either and the library still builds. They are worth a
+short chapter for a reason that has nothing to do with their size — **they are
+the proof that the preceding chapters are enough**. Both are written entirely
+in terms of trees, lists, sets and properties, with no new mechanism, no new
+node kind and no privileged access.
+
+**`dcond`** represents boolean conditions in disjunctive or conjunctive normal
+form. A DNF condition is a *set of sets* of trees: the inner sets are
+conjunctions of atoms, the outer set their disjunction. Since §6's sets are
+canonical ordered lists and §2 makes equal terms one pointer, two conditions
+that are equal in normal form are the same pointer — so testing implication
+becomes a set operation rather than a proof search.
+
+**`occur`** counts, for every subtree of a given root, how many times it occurs.
+That is the natural question to ask of a DAG before generating code: a subterm
+used once can be inlined, a subterm used many times deserves a name and a
+temporary variable. The counting is a traversal that increments a property per
+node.
+
+### Its role in TLIB
+
+Their role is deliberately marginal, and saying so is the point.
+
+`dcond` is, in the vocabulary of §1, **another algebra** — a boolean one, whose
+carrier happens to be `Tree`. It illustrates that the universal carrier is not
+limited to syntax: normal forms of logical formulae live in the same space as
+signal terms, share the same table, and can be memoised on nodes with the same
+`property`.
+
+`occur` is an application of §5 with one twist worth copying. Occurrence counts
+are meaningless without a root — the same subtree occurs a different number of
+times in different terms — so the count cannot simply be *the* count of a node.
+`Occur` therefore mints a **fresh property key per root**, which is §3's gensym
+used to parameterise an annotation. The pattern generalises: whenever a fact is
+a function of a node *and* something else, either the key or the table has to
+carry that something else, exactly as §5's `property2` does for a second tree.
+
+Neither module is on the path of any other chapter. They are here because a
+library that claims its core is sufficient should be able to point at things
+built on top of it without extending it.
+
+### More precisely
+
+A DNF condition is an element of a **free distributive lattice** over the atoms,
+represented in a normal form:
+
+```math
+c = \bigvee_{i} \Big( \bigwedge_{j} a_{ij} \Big)
+```
+
+— a disjunction of conjunctions of atoms, stored as a set of sets. The
+canonical representation (§6) is what makes the algebra usable: conjunction is a
+pairwise union of clauses, disjunction is a union of clause sets, and
+implication reduces to a comparison rather than a decision procedure.
+`dnfLess(c₁, c₂)` is specified as $c_1 ∨ c_2 = c_2$, which is the lattice
+definition of $c_1 ⟹ c_2$.
+
+For occurrences, the count is a function of *two* arguments — a subtree and the
+root it is counted in:
+
+```math
+\mathrm{count}_{r}(t) = \#\{\, \text{positions } p \text{ in } r : r|_p = t \,\}
+```
+
+— the number of positions of $r$ at which $t$ appears. Note that this is a count
+over the *unfolded term*, not over the DAG: a subterm shared by two parents
+occurs twice, which is exactly what a code generator needs to know.
+
+### In the code
+
+`dcond` is fourteen declarations ([dcond.hh:34-42](tlib/dcond.hh#L34-L42)):
+`dnfCond`, `dnfAnd`, `dnfOr`, `dnfLess` and the four `cnf` counterparts. The
+implementation ([dcond.cpp](tlib/dcond.cpp)) is set manipulation over §6's
+sets, and the header carries an honest note — *"WARNING : Memoization probably
+needed here !!!!"* — which is a fair summary of its maturity: correct, used, and
+not yet on anyone's hot path.
+
+`occur` is one small class ([occur.hh:33](tlib/occur.hh#L33)):
+
+```cpp
+class Occur : public Garbageable {
+    Tree fKey;                        // a fresh property key, specific to this root
+   public:
+    Occur(Tree root);                 // count the occurrences of each subtree of root
+    int getCount(Tree t);
+};
+```
+
+The constructor ([occur.cpp:36-38](tlib/occur.cpp#L36-L38)) builds the key,
+walks the tree incrementing a count per node, and then resets the root's own
+count to zero — the root does not occur inside itself. `specificKey`
+([occur.cpp:61-67](tlib/occur.cpp#L61-L67)) is where the per-root key is minted
+with `unique`, and `countOccurrences`
+([occur.cpp:72-77](tlib/occur.cpp#L72-L77)) is the three-line traversal.
+
+*Code references verified at `9e26537`.*
+
+### Invariants and non-goals
+
+**Neither module is required.** Nothing in `tree`, `node`, `symbol`, `list`,
+`property`, `recursive-tree`, `rewrite` or `fixpoint` refers to them.
+
+**`dcond` assumes its inputs are in normal form**, as `setUnion` assumes
+canonical sets (§6). It also does not memoise, which its own header admits.
+
+**Occurrence counts are per root, and per session.** A count read with one
+`Occur`'s key is meaningless for another root. The counts are properties, so
+they die at `cleanup()` like everything else (§4).
+
+**`occur` counts the unfolded term, not the DAG.** That is the point — but it
+means the count of a heavily shared subterm can be exponentially larger than
+the number of nodes, and the traversal that computes it visits every position
+unless the caller has arranged otherwise.
+
+**`occur` does not cross recursive definitions.** It follows branches, and §8
+established that definitions live in properties, so occurrences inside a
+recursive body are not counted from outside it.
+
+### Origins
+
+Normal forms for boolean expressions are as old as the subject; the specific
+observation that matters here is the one §2's origins already made about BDDs —
+a canonical representation plus maximal sharing turns logical equivalence into
+pointer equality. `dcond` uses the weaker, simpler device of DNF over canonical
+sets, which is adequate when the formulae are small and the operations rare.
+
+Counting occurrences to decide what deserves a name is **common subexpression
+elimination** seen from the code generator's side, and takes us back to Ershov
+(1958), cited in §2: the same hash table that finds a repeated subexpression is
+what makes counting its uses meaningful.
+
+---
+
+## 12. The stack, in one picture
+
+Twelve sections is a lot of detail to hold at once. Here is the whole library
+in one diagram, read bottom-up — each layer using only what is below it:
+
+```mermaid
+flowchart BT
+    G["§4 session memory<br/><i>allocate freely, free at once</i>"]
+    S["§3 symbols<br/><i>interned names</i>"]
+    N["§3 nodes<br/><i>tagged union</i>"]
+    T["§2 hash-consed trees<br/><i>equal content = same pointer</i>"]
+    P["§5 properties<br/><i>memoisation on the node</i>"]
+    L["§6 lists, sets, environments<br/><i>encoded as terms</i>"]
+    O["§7 signatures and opcodes<br/><i>O(1) constructor identity</i>"]
+    R["§8 recursive terms<br/><i>finite syntax, infinite meaning</i>"]
+    W["§9 rewriting"]
+    F["§10 fixed points"]
+    C["client algebras<br/><i>types, intervals, code generation</i>"]
+
+    G --> S --> N --> T
+    T --> P
+    T --> L
+    S --> O
+    T --> R
+    P --> R
+    R --> W
+    R --> F
+    P --> W
+    P --> F
+    O --> C
+    W --> C
+    F --> C
+    L --> C
+```
+
+The load-bearing edges are the ones through the middle. Everything rests on
+hash-consed trees; hash-consing rests on cheap exact node equality, which rests
+on interned symbols; and all of it rests on a memory model that never recycles
+an address. Properties depend on trees and enable everything above them.
+Recursive terms need both trees and properties, because §8's cycle goes through
+the property graph. Rewriting and fixed points are the two ways of computing
+over recursion, and the client's algebras sit on top, which is where TLIB stops.
+
+### The argument in twelve sentences
+
+| § | The one thing to remember |
+| :--- | :--- |
+| 1 | A pass is a fold: one traversal, one algebra per interpretation, and the term algebra is one of them. |
+| 2 | Two structurally equal terms are one object, so equality is a pointer comparison and sharing is automatic. |
+| 3 | A node is a tagged union and a symbol is an interned name — the same idea as §2, one level down. |
+| 4 | Nobody frees anything until everything is freed, which is what keeps a pointer meaning one term forever. |
+| 5 | A fold's result is cached on the node it belongs to, which is only sound because the value depends on the term alone. |
+| 6 | Lists, sets and environments are terms, so they inherit sharing, equality and memoisation for free. |
+| 7 | A constructor's identity is a dense opcode on its symbol, so a fold dispatches in constant time. |
+| 8 | Recursion is a finite term denoting an infinite tree, with the cycle in the properties, never in the branches. |
+| 9 | Rewriting is a fold into the syntax algebra, memoised for sharing and renaming for immutability. |
+| 10 | Attributes over recursion are computed by iteration in a lattice, with widening for termination. |
+| 11 | The optional modules add nothing to the core, which is the point. |
+| 12 | Everything above is machinery; the meaning lives in the client's algebras. |
+
+### What TLIB deliberately never knows
+
+The boundary has been redrawn in almost every chapter, and it is the same line
+each time.
+
+TLIB does not know what a signal is, what a type is, what an interval is, or
+what audio is. It does not know the arity of any constructor, which symbols
+form a language, or what a term *means*. It does not know whether a fixed point
+should be least or greatest, what a delay does to a value, or which analyses a
+compiler wants to run. It has no opinion on normalisation, and will not
+simplify, reorder or rewrite anything on its own.
+
+What it knows is how to represent terms so that equal ones are identical, how
+to annotate them so that nothing is computed twice, how to keep that true in
+the presence of recursion, and how to hand a client's algebra a term with a
+constructor identity it can dispatch on in one instruction.
+
+That division is the reason the library has survived two decades inside a
+compiler that has changed a great deal around it. The core says nothing about
+audio, so nothing about audio can obsolete it.
+
+### Where to go next
+
+- [README.md](README.md) — the API surface, layer by layer, and the build.
+- [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md) — §7 in full, with the conformance
+  tests.
+- [REWRITE-SPEC.md](REWRITE-SPEC.md) — §9 in full, including the paired family.
+- [tour-examples.cpp](tour-examples.cpp) — every surprising claim in this
+  document, as running checks.
+- [tests.cpp](tests.cpp) — the library's own test suite, and the executable
+  form of §1's arithmetic example.
+- [CONCEPT-TOUR-AUTHORING.md](CONCEPT-TOUR-AUTHORING.md) — how this document
+  was written, if you want to write one for your own library.
