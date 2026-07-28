@@ -49,6 +49,10 @@ either — they live as running checks in
 [tour-examples.cpp](tour-examples.cpp), wired into `ctest`, so a claim that
 stops being true breaks a test instead of quietly becoming fiction.
 
+Cross-references are written **§n**, counting the concepts in the order they
+appear: §1 is *Signatures and algebras*, §2 *Hash-consing and maximal sharing*,
+and so on to §12, *The stack, in one picture*. This section is not one of them.
+
 The concepts are ordered by dependency: each one is introduced before the
 sections that rest on it. The order is not a strict layering, though, and it
 would be dishonest to pretend otherwise — the first concept needs a `Tree` to
@@ -64,7 +68,7 @@ resolve a term before meeting it can jump ahead.
 
 ---
 
-## 1. Signatures and algebras
+## Signatures and algebras
 
 ### The idea
 
@@ -179,8 +183,8 @@ The **term algebra** $T_Σ$ is the $Σ$-algebra whose carrier is the set of
 finite terms built from $Σ$, and whose operation for $c$ is the construction of
 the term $c(t₁, …, tₙ)$.
 
-A **homomorphism** $h : 𝒜 → ℬ$ between two $Σ$-algebras is a function $h : A →
-B$ on their carriers that commutes with every operation:
+A **homomorphism** $h : 𝒜 → ℬ$ between two $Σ$-algebras is a function
+$h : A → B$ on their carriers that commutes with every operation:
 $h(c_𝒜(x₁, …, xₙ)) = c_ℬ(h\,x₁, …, h\,xₙ)$.
 
 $T_Σ$ is **initial**: for every $Σ$-algebra $𝒜$ there exists exactly *one*
@@ -367,7 +371,7 @@ one for the *why* and the *bananas* one for the *how*.
 
 ---
 
-## 2. Hash-consing and maximal sharing
+## Hash-consing and maximal sharing
 
 ### The idea
 
@@ -673,7 +677,7 @@ through in a different language.
 
 ---
 
-## 3. Nodes and symbols
+## Nodes and symbols
 
 ### The idea
 
@@ -965,7 +969,7 @@ are exactly what `Symbol::get` and `CTree::make` implement.
 
 ---
 
-## 4. The session memory model
+## The session memory model
 
 ### The idea
 
@@ -1192,7 +1196,7 @@ batch process whose peak memory is bounded by its input.
 
 ---
 
-## 5. Properties
+## Properties
 
 ### The idea
 
@@ -1364,8 +1368,8 @@ measurement.
 The design that survived, for the case that is actually used, does the opposite
 of everything this section has advocated: `property2<Tree>` keeps its table in
 **its own** `std::unordered_map<Tree, Entry>`, keyed directly by the `a`
-pointer, and never touches `CTree`'s property list at all. The first $(b,
-value)$ pair lives inline in the entry; a second distinct $b$ promotes it to a
+pointer, and never touches `CTree`'s property list at all. The first
+$(b, value)$ pair lives inline in the entry; a second distinct $b$ promotes it to a
 small nested map. That the library's most-used memo table abandoned the
 per-node scheme is not an embarrassment — it is the honest answer to a
 different access pattern, and the reasoning is preserved in the code precisely
@@ -1440,7 +1444,7 @@ of one idea: compute a value from a structure, once, and keep it.
 
 ---
 
-## 6. Lists, sets and environments
+## Lists, sets and environments
 
 ### The idea
 
@@ -1679,7 +1683,7 @@ for free, and set equality collapses to a pointer comparison.
 
 ---
 
-## 7. Signatures and opcodes
+## Signatures and opcodes
 
 ### The idea
 
@@ -1926,7 +1930,7 @@ tree.
 
 ---
 
-## 8. Recursive terms
+## Recursive terms
 
 ### The idea
 
@@ -2240,7 +2244,7 @@ chapter is: recursion is a graph problem wearing the clothes of syntax.
 
 ---
 
-## 9. Rewriting
+## Rewriting
 
 ### The idea
 
@@ -2485,7 +2489,7 @@ stated in the specification rather than left to be discovered.
 
 ---
 
-## 10. Fixed points
+## Fixed points
 
 ### The idea
 
@@ -2749,7 +2753,7 @@ trade a compiler that must be deterministic (§2) has good reason to make.
 
 ---
 
-## 11. Optional modules
+## Optional modules
 
 ### The idea
 
@@ -2887,7 +2891,7 @@ what makes counting its uses meaningful.
 
 ---
 
-## 12. The stack, in one picture
+## The stack, in one picture
 
 Twelve sections is a lot of detail to hold at once. Here is the whole library
 in one diagram, read bottom-up — each layer using only what is below it:
