@@ -279,6 +279,35 @@ the file.
 comment is a finding to report, not something to quietly repeat or
 quietly ignore.
 
+**Beware the *faithful lie*: prose can be false precisely because it is
+faithful to its source.** This is the failure mode the two rules above
+do not catch, because there is no disagreement to detect — the comment
+and the code say compatible things, and the missing fact lies outside
+both. Two shapes recur:
+
+- *A comment names a consumer, or a share, that has since vanished.* "A
+  fast slot for one hot property — in this compiler, the propagation
+  memo, about 20% of property traffic." Accurate when written; the
+  consumer had since moved out, and the field had no user at all. The
+  code cannot say so: a field does not know whether anyone reads it.
+- *A comment states a semantics the code expresses only indirectly.*
+  `dnfLess(c1, c2)` was documented as `c1 ⟹ c2`; the body reads
+  `c1 == dnfOr(c1, c2)`, which says the opposite. Reading the body is
+  not enough either, unless you stop to work out what the expression
+  *means*.
+
+Two habits catch both. **Search for the call sites** whenever a claim
+names a user, a frequency or a share — grep the whole dependency chain,
+not the file you happen to be in. And **let the tests arbitrate
+semantics**: the code says what a function does, the test says what it
+is *for*. Where a test and a comment disagree, the test is the better
+witness, and the disagreement is a finding.
+
+This axis is also the argument against writing a tour with only the
+library in view. The claims most likely to be wrong are the ones about
+what the code means to those who call it, which is exactly what a
+narrow window hides — see *Route the findings* below.
+
 **Measure rather than assume.** Sizes, ratios, complexities: run it. A
 comment claiming `sizeof` is 112 does not make it 112.
 
@@ -326,13 +355,21 @@ chapter — *code references verified at `<sha>`* — tells a reader how much
 history separates the text from the current source, and turns
 re-verification into a targeted diff instead of a full re-read.
 
-**Name the channel for findings.** The author of a tour is often not the
+**Route the findings.** The author of a tour is often not the
 maintainer of the code, and almost never the maintainer of every
 vendored copy of it. Decide, before the first finding, where findings
 go: to the owner, to a journal, to an issue tracker. And close them by a
 stated rule — *a finding is closed when every copy is fixed, built and
 tested*, not when it has been reported, and not when the local copy
 compiles.
+
+If the work is split so that one party owns the sources and another owns
+the document, note that the split buys freedom from conflicts at the
+price of a blind spot, and that the blind spot sits exactly where the
+document's claims are weakest — on what the code means to its callers.
+A cross-read by someone whose window includes the consumers is then not
+a courtesy, it is the compensation for a structural limit. Ask for it by
+naming what you cannot see, rather than asking for "a review".
 
 **Never let the tour be the sole holder of an invariant.** Drafting
 regularly unearths an invariant that is real, load-bearing, and written
@@ -354,6 +391,8 @@ first place.
 - [ ] No notation spent that a later chapter needs more
 - [ ] Consequences stated separately from statements
 - [ ] Code claims verified against the source, with line references
+- [ ] Claims naming a consumer, a share or a frequency checked against call sites
+- [ ] Semantic claims checked against the test that pins them, not only the body
 - [ ] At least one apparently arbitrary line explained
 - [ ] Measurements measured
 - [ ] Non-goals written against the likely misreading
