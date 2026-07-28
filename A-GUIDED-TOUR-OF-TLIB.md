@@ -346,7 +346,7 @@ second fails. This is why the example above names its constructors
 language is the convention that keeps independent clients out of each other's
 way. What signatures make disjoint is the *opcode space*, not the *name space*.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Origins
 
@@ -648,7 +648,7 @@ no obvious owner to release it. The library does not attempt reclamation during
 a session at all — see §4 for what it does instead, and why that suits a
 compiler.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Origins
 
@@ -943,7 +943,7 @@ alpha-equivalent recursive terms land on the same pointer.
 `Node`, its equality, its canonical hash and its predicates. The pointer
 payload exists precisely so that this is rarely necessary.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Origins
 
@@ -1188,7 +1188,7 @@ destructor, unused by the library itself but still live downstream, where
 Faust's audio types are `Type = P<AudioType>`. Read it as a null-safety
 convenience, never as ownership.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Origins
 
@@ -1318,7 +1318,7 @@ denotes, and §2 showed the gap between the two is unbounded.
 ### In the code
 
 The mechanism on the node is four short methods on `CTree`
-([tree.hh:306-335](tlib/tree.hh#L306-L335)):
+([tree.hh:296-325](tlib/tree.hh#L296-L325)):
 
 ```cpp
 typedef std::map<Tree, Tree> plist;   // both key and value are Trees
@@ -1356,22 +1356,18 @@ arbitrary C++ types.
 Two refinements are where the engineering shows, and both are worth reading in
 the source because both record what was measured.
 
-**`fFastProperty`** ([tree.hh:299](tlib/tree.hh#L299)) is a single dedicated
-slot on every `CTree`, bypassing the map entirely, for one caller-chosen hot
-property. Unlike `setProperty` it is **not namespaced by key**, so at most one
-consumer in the whole program may claim it; two unrelated users would silently
-overwrite each other.
-
-It is currently **unclaimed**, and the story of how it got that way is worth
-more than the mechanism. Its historical claimant was Faust's propagation memo,
-some 20% of all property traffic when it was measured — and it moved out, to a
-plain table keyed by ordinary C++ data. The reason was measured rather than
-assumed: on large parallel structures the dominant cost was not the map lookup
-the slot was avoiding, but *building the hash-consed key* — a cons list of
-hundreds of entries per call, paid on cache hits too. Which is the same lesson
-`property2` teaches below, arriving from the opposite direction: the per-node
-scheme is not universally the right one, and only measurement says which
-access pattern you have.
+**A fast-path slot that no longer exists** is worth one paragraph, because its
+disappearance argues the chapter's thesis better than its presence did. `CTree`
+used to carry a single dedicated field bypassing the map entirely, reserved for
+one caller-chosen hot property — in Faust, the propagation memo, some 20% of
+all property traffic when it was measured. That claimant then moved out to a
+plain table keyed by ordinary C++ data, for a reason established by measurement
+rather than taste: on large parallel structures the dominant cost was not the
+map lookup the slot avoided but *building the hash-consed key*, a cons list of
+hundreds of entries per call, paid on cache hits too. Once orphaned, the field
+was deleted, and `sizeof(CTree)` fell from 120 bytes to 112 across every node
+of every session. A memoisation mechanism is judged by the access pattern it
+serves; when the pattern goes, so should the mechanism.
 
 **`property2`** ([property.hh:157](tlib/property.hh#L157) and its `Tree`
 specialisation at [property.hh:251](tlib/property.hh#L251)) memoises the binary
@@ -1431,9 +1427,10 @@ not.** The default constructor guarantees isolation through a fresh symbol.
 The named constructor deliberately gives that up, and two components using the
 same name share one annotation, whether or not they intended to.
 
-**`fFastProperty` admits at most one owner, and currently has none.** It is not
-keyed, so it offers no protection whatever against a second claimant — the
-discipline is entirely by convention.
+**There is no fast path.** Every property goes through the node's map. The
+dedicated slot described above was removed once it had no claimant, so a
+consumer that wants to beat the map's cost must do what the propagation memo
+did: keep its own table, keyed by whatever is actually cheap for it.
 
 **`property2<Tree>` is not part of a tree's property list.** It keeps its own
 table, so `clearProperties()` on a node does not clear it, and a debugging pass
@@ -1446,7 +1443,7 @@ is only reclaimed at the end of the session, like everything else.
 **None of this is thread-safe.** Properties are ordinary mutable state on
 shared nodes, and §4's single-thread rule covers them.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Origins
 
@@ -1653,7 +1650,7 @@ the ancestors of the general rewriting machinery, and `substitute` is one of
 the two functions whose per-call fresh keys produced the pathological node
 carrying tens of thousands of properties that §5 mentioned.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Invariants and non-goals
 
@@ -1899,7 +1896,7 @@ mechanism, fold included, is `checkArithmeticSignatureFold()` in
 [tests.cpp:255](tests.cpp#L255); the full specification is
 [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md).
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Invariants and non-goals
 
@@ -2208,7 +2205,7 @@ instance-independent is the resulting **order**, because `fCanonKey` (§3)
 strips the instance from those names. For a true canonical form, `deBruijn2Sym`
 is the function to call.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Invariants and non-goals
 
@@ -2459,7 +2456,7 @@ by the original while building from rewritten children, and exposes its memo so
 that nested arguments can be matched with their transforms. The full
 specification of both is [REWRITE-SPEC.md](REWRITE-SPEC.md).
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Invariants and non-goals
 
@@ -2737,7 +2734,7 @@ permanent. Only values that depend on the component being iterated are
 from `RecPlan` ([tree.hh:515](tlib/tree.hh#L515)), memoised one per root per
 session, so repeated analyses of the same term share one Tarjan run.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Invariants and non-goals
 
@@ -2749,12 +2746,16 @@ over-approximates the true value; precision is a separate, best-effort concern.
 `lessEqual` must be a partial order and `bottom`/`top` its bounds; `widen` must
 over-approximate both arguments and must stabilise every chain; and `combine`
 must be **monotone** in its children's values, since that is what makes the
-induced $F$ monotone. Nothing checks any of it. A non-monotone `combine` does
-not merely slow convergence — it invalidates the soundness argument, and the
-iterator will happily report a result computed from assumptions that never
-held. A `widen` that merely returns the fresh value, which is the default,
-makes the iterator non-terminating on a domain with infinite chains rather than
-incorrect.
+induced $F$ monotone. Nothing checks any of it, and the failure is not
+uniform across the phases: during the ascent a non-monotone `combine` would
+show up as oscillation, which the iteration cap catches and answers with
+`top` — imprecise but sound. It is the **narrowing** phase that rests nakedly
+on monotonicity, since "each step from a post-fixed point stays a post-fixed
+point" is exactly the property that fails without it. Monotone by
+construction, unchecked by machine, and narrowing is where a violation would
+turn silent. A `widen` that merely returns the fresh value, which is the
+default, makes the iterator non-terminating on a domain with infinite chains
+rather than incorrect.
 
 **Reaching the iteration cap is a precision failure, not an error.** The result
 is `top` for every branch of the component: sound, useless, and silent. A
@@ -2875,9 +2876,9 @@ the join, $c_1 ∨ c_2 = c_1$ says $c_2 ⊑ c_1$. So:
 
 — it holds when the **second** argument is the stronger condition. The test
 suite pins exactly that, checking `dnfLess(a, a ∧ b)`
-([tests.cpp:1100](tests.cpp#L1100)): $a ∧ b$ implies $a$. Note that the comment
-in [dcond.hh:37](tlib/dcond.hh#L37) states the converse; the implementation and
-the test agree with each other, and the comment is the odd one out.
+([tests.cpp:1100](tests.cpp#L1100)): $a ∧ b$ implies $a$. The header comment
+([dcond.hh:37](tlib/dcond.hh#L37)) stated the converse until recently, and
+this chapter reproduced the error faithfully; the test is what settled it.
 
 For occurrences, the count is a function of *two* arguments — a subtree and the
 root it is counted in:
@@ -2920,7 +2921,7 @@ count to zero — the root does not occur inside itself. `specificKey`
 with `unique`, and `countOccurrences`
 ([occur.cpp:72-77](tlib/occur.cpp#L72-L77)) is the three-line traversal.
 
-*Code references verified at `2346664`.*
+*Code references verified at `5784ba8`.*
 
 ### Invariants and non-goals
 
