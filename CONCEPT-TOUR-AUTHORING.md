@@ -216,7 +216,7 @@ Unavoidable in a dependency-ordered text. Handle them with a **footnote
 at first mention**, containing (a) a thumbnail definition sufficient to
 follow the current argument, and (b) the section that develops it.
 
-```
+```markdown
 … terms in a real compiler are recursive[^rec], which the definitions
 above do not cover at all.
 
@@ -363,13 +363,21 @@ stated rule — *a finding is closed when every copy is fixed, built and
 tested*, not when it has been reported, and not when the local copy
 compiles.
 
-If the work is split so that one party owns the sources and another owns
-the document, note that the split buys freedom from conflicts at the
-price of a blind spot, and that the blind spot sits exactly where the
-document's claims are weakest — on what the code means to its callers.
-A cross-read by someone whose window includes the consumers is then not
-a courtesy, it is the compensation for a structural limit. Ask for it by
-naming what you cannot see, rather than asking for "a review".
+**Have someone re-read whose blind spots are not yours.** It is tempting
+to treat a cross-read as insurance against a split — if one party owns
+the sources and another the document, the second cannot see the callers,
+so the first should check. True, but too narrow: *no window sees
+everything*, and a split is not what creates the gap. A reviewer who
+knows a header intimately stops re-reading it, which is how a comment
+naming a vanished consumer survives years inside its own maintainer's
+territory. The reviewer's blind spots are simply different from yours.
+
+So a cross-read is not compensation for a structural limit, it **is**
+the structure: the protocol does not repair anyone's blind spots, it
+makes them overlap. Which is also the practical instruction — ask by
+naming what you cannot see ("check my claims about the callers", "check
+the history attributions"), not by asking for "a review", and expect the
+reviewer to be wrong sometimes too.
 
 **Never let the tour be the sole holder of an invariant.** Drafting
 regularly unearths an invariant that is real, load-bearing, and written
