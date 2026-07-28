@@ -1101,10 +1101,16 @@ last use of anything. A flag, `gHeapCleanup`
 skip the registry while the sweep is running, which is what keeps `cleanup()`
 linear instead of quadratic.
 
-Individual deletion *is* still possible during a session, and its cost tells
-you it is not meant to be common: `operator delete` calls `std::list::remove`
-([garbageable.cpp:95](tlib/garbageable.cpp#L95)), a linear scan of every live
-object. Delete one object, fine; delete in a loop and the session is quadratic.
+The registry supports individual deletion mechanically — `operator delete`
+removes the pointer from the list ([garbageable.cpp:95](tlib/garbageable.cpp#L95))
+— but that is a property of the allocator, not a licence. **An interned tree or
+symbol must never be deleted individually.** `CTree::~CTree`
+([tree.cpp:277](tlib/tree.cpp#L277)) deliberately does not remove the node from
+the construction table, so deleting one leaves a dangling entry that the next
+lookup will dereference. The same holds for `Symbol` and its table. Individual
+deletion is for ordinary `Garbageable` objects that no table points at — and
+even for those it costs a `std::list::remove`, a linear scan of every live
+object, so doing it in a loop makes the session quadratic.
 
 The registries are function-local statics
 ([garbageable.cpp:35](tlib/garbageable.cpp#L35)) rather than file-scope ones —
@@ -1138,9 +1144,11 @@ One platform difference is worth knowing before it surprises you. On Windows
 ([garbageable.cpp:55-63](tlib/garbageable.cpp#L55-L63)), `cleanup()` frees the
 memory of each object without invoking its destructor, because an object using
 virtual inheritance from `Garbageable` may not have the same complete-object
-address as the stored pointer. Memory is reclaimed either way, but a
-destructor's own work is not done — `CTree::~CTree`, for instance, is what
-deletes a node's property map.
+address as the stored pointer. The outer object's storage is reclaimed either
+way, but **anything a destructor owns is not** — `CTree::~CTree` is what deletes
+a node's property map, and `Symbol` holds a `std::string`. For a process that
+runs one session and exits this is invisible; for a host that compiles one
+program after another it is a cumulative leak.
 
 ### Invariants and non-goals
 
@@ -1157,14 +1165,19 @@ times they are used.
 **A session is single-threaded.** The construction table, the symbol table and
 the allocation registries are global mutable state with no synchronisation
 anywhere in the library. Two threads building trees concurrently corrupt them.
-(The one exception is diagnostic: the printer's context in
-[recursive-print.cpp:41](tlib/recursive-print.cpp#L41) is `thread_local`, so
-printing from several threads is safe.)
+The one concession is diagnostic: the printer's context
+([recursive-print.cpp:41](tlib/recursive-print.cpp#L41)) is `thread_local`, so
+several threads may print concurrently to distinct streams *provided* the term
+graph and its properties stay read-only throughout.
 
 **`Garbageable` is not a general-purpose allocator.** It is a registry of
 objects with a single common lifetime. Using it for objects that should die
 early converts them into leaks-until-cleanup, and deleting them by hand costs
 a linear scan.
+
+**Never delete an interned tree or symbol.** The construction tables are not
+updated by the destructors, so an individual delete leaves a dangling entry
+that a later lookup will follow. Only `cleanup()` may end a tree's life.
 
 **There is no reference counting, and a raw `Tree` needs no wrapper.** The
 session model is the whole storage story: a raw pointer is valid for the whole
@@ -1856,7 +1869,7 @@ is written:
 - a symbol signed by *another* signature is an error that changes nothing.
 
 The two fields are assigned only after every validation has passed
-([symbol.cpp:381-383](tlib/symbol.cpp#L381-L383)), so a failed `add` leaves
+([symbol.cpp:373-376](tlib/symbol.cpp#L373-L376)), so a failed `add` leaves
 neither the signature nor the symbol table modified. That "commit last"
 discipline is what makes the invariants below true even in the presence of
 errors.
@@ -2312,9 +2325,10 @@ returns a term that is alpha-equivalent to its input, not equal to it.
 ### Its role in TLIB
 
 Rewriting is the *write* half of the library, where the previous chapters were
-mostly about reading. Every transformation a Faust compilation performs —
-normalising signal expressions, substituting, lowering to a form the code
-generator accepts — is one of the `treeRewrite` family with a different rule.
+mostly about reading. Most structural transformations a Faust compilation
+performs — normalising signal expressions, substituting, lowering to a form the
+code generator accepts — are one of the `treeRewrite` family with a different
+rule.
 In practice the workhorse is not the plain form but the *paired* one described
 below, since most real transformations need to consult the annotations of the
 original node while building from rewritten children.
@@ -2498,8 +2512,10 @@ form, leaving that to the caller.
 Rewriting a *shared graph* rather than a tree is the older subject of **term
 graph rewriting**, surveyed in Barendregt et al., *Term Graph Rewriting*
 (PARLE, 1987). The distinction matters exactly as this chapter describes it:
-rewriting a DAG in place means one rewrite serves every occurrence, and the
-memo here is what turns the tree semantics into the graph one.
+rewriting a shared node once serves every one of its occurrences, and the memo
+here is what turns the tree semantics into the graph one. Note that TLIB never
+rewrites in place: it rebuilds immutably, and the result is shared because
+hash-consing shares it.
 
 For the guarded variant the ancestry is different: a rule with a premise
 discharged by a prior judgment is a **conditional rewrite rule**, and the
@@ -2597,6 +2613,14 @@ variables of the group, and collect the results. A **fixed point** is an
 assignment with $F(X) = X$; a **post-fixed point** is one with $F(X) ⊑ X$,
 which is the weaker and more useful notion, since any post-fixed point is a
 sound over-approximation.
+
+Everything that follows rests on one hypothesis that the domain owes and the
+library cannot check: $F$ must be **monotone**, $X ⊑ Y ⟹ F(X) ⊑ F(Y)$. Since
+$F$ is built by evaluating bodies with `combine`, this amounts to requiring
+`combine` to be monotone in its children's values. Without it the ascending
+sequence below need not be increasing, Kleene iteration has no reason to
+converge to anything meaningful, and the narrowing argument — that applying $F$
+to a post-fixed point yields another post-fixed point — simply fails.
 
 The ascending regime is **Kleene iteration**: start at $⊥$ and apply $F$ until
 nothing moves.
@@ -2721,11 +2745,16 @@ session, so repeated analyses of the same term share one Tarjan run.
 With widening it is deliberately not the least. Soundness means the answer
 over-approximates the true value; precision is a separate, best-effort concern.
 
-**The domain owes the iterator a real lattice.** `lessEqual` must be a partial
-order and `bottom`/`top` its bounds; `widen` must over-approximate both
-arguments and must stabilise every chain. Nothing checks this, and a `widen`
-that merely returns the fresh value — the default — makes the iterator
-non-terminating on a domain with infinite chains rather than incorrect.
+**The domain owes the iterator a real lattice, and a monotone `combine`.**
+`lessEqual` must be a partial order and `bottom`/`top` its bounds; `widen` must
+over-approximate both arguments and must stabilise every chain; and `combine`
+must be **monotone** in its children's values, since that is what makes the
+induced $F$ monotone. Nothing checks any of it. A non-monotone `combine` does
+not merely slow convergence — it invalidates the soundness argument, and the
+iterator will happily report a result computed from assumptions that never
+held. A `widen` that merely returns the fresh value, which is the default,
+makes the iterator non-terminating on a domain with infinite chains rather than
+incorrect.
 
 **Reaching the iteration cap is a precision failure, not an error.** The result
 is `top` for every branch of the component: sound, useless, and silent. A
@@ -2789,9 +2818,9 @@ node kind and no privileged access.
 **`dcond`** represents boolean conditions in disjunctive or conjunctive normal
 form. A DNF condition is a *set of sets* of trees: the inner sets are
 conjunctions of atoms, the outer set their disjunction. Since §6's sets are
-canonical ordered lists and §2 makes equal terms one pointer, two conditions
-that are equal in normal form are the same pointer — so testing implication
-becomes a set operation rather than a proof search.
+ordered and duplicate-free and §2 makes equal terms one pointer, two conditions
+with the same clauses are the same pointer — so comparing conditions becomes a
+set operation rather than a proof search.
 
 **`occur`** counts, for every subtree of a given root, how many times it occurs.
 That is the natural question to ask of a DAG before generating code: a subterm
@@ -2823,19 +2852,32 @@ built on top of it without extending it.
 
 ### More precisely
 
-A DNF condition is an element of a **free distributive lattice** over the atoms,
-represented in a normal form:
+A DNF condition is a disjunction of conjunctions of atoms, stored as a set of
+sets:
 
 ```math
 c = \bigvee_{i} \Big( \bigwedge_{j} a_{ij} \Big)
 ```
 
-— a disjunction of conjunctions of atoms, stored as a set of sets. The
-canonical representation (§6) is what makes the algebra usable: conjunction is a
-pairwise union of clauses, disjunction is a union of clause sets, and
-implication reduces to a comparison rather than a decision procedure.
-`dnfLess(c₁, c₂)` is specified as $c_1 ∨ c_2 = c_2$, which is the lattice
-definition of $c_1 ⟹ c_2$.
+— the inner sets are clauses, the outer set their disjunction. Because §6's
+sets are ordered and duplicate-free, two conditions with the same clauses are
+one pointer, and the operations become set manipulations: conjunction pairs
+clauses, disjunction unions clause sets.
+
+Ordering is where care is needed, because the argument order of the predicate
+is easy to read backwards. The implementation is
+$\mathrm{dnfLess}(c_1, c_2) \iff c_1 ∨ c_2 = c_1$, and in a lattice where $∨$ is
+the join, $c_1 ∨ c_2 = c_1$ says $c_2 ⊑ c_1$. So:
+
+```math
+\mathrm{dnfLess}(c_1, c_2) \iff c_2 ⟹ c_1
+```
+
+— it holds when the **second** argument is the stronger condition. The test
+suite pins exactly that, checking `dnfLess(a, a ∧ b)`
+([tests.cpp:1100](tests.cpp#L1100)): $a ∧ b$ implies $a$. Note that the comment
+in [dcond.hh:37](tlib/dcond.hh#L37) states the converse; the implementation and
+the test agree with each other, and the comment is the odd one out.
 
 For occurrences, the count is a function of *two* arguments — a subtree and the
 root it is counted in:
@@ -2850,12 +2892,15 @@ occurs twice, which is exactly what a code generator needs to know.
 
 ### In the code
 
-`dcond` is fourteen declarations ([dcond.hh:34-42](tlib/dcond.hh#L34-L42)):
+`dcond` is eight declarations ([dcond.hh:34-42](tlib/dcond.hh#L34-L42)):
 `dnfCond`, `dnfAnd`, `dnfOr`, `dnfLess` and the four `cnf` counterparts. The
 implementation ([dcond.cpp](tlib/dcond.cpp)) is set manipulation over §6's
-sets, and the header carries an honest note — *"WARNING : Memoization probably
-needed here !!!!"* — which is a fair summary of its maturity: correct, used, and
-not yet on anyone's hot path.
+sets, and it is the least finished corner of the library — the header asks for
+memoisation that is not there (*"WARNING : Memoization probably needed
+here !!!!"*), `dnfAnd` carries an *"A REVOIR !!!"*
+([dcond.cpp:192](tlib/dcond.cpp#L192)), and the test suite covers idempotence,
+commutativity and one ordering example rather than an algebraic
+specification.
 
 `occur` is one small class ([occur.hh:33](tlib/occur.hh#L33)):
 
@@ -2884,6 +2929,13 @@ with `unique`, and `countOccurrences`
 
 **`dcond` assumes its inputs are in normal form**, as `setUnion` assumes
 canonical sets (§6). It also does not memoise, which its own header admits.
+
+**`dcond`'s constants are not specified.** `nil` serves as a special case in
+the operations, but which formula it denotes — the empty disjunction, or truth
+— is nowhere written down, and the DNF of *true* would conventionally be the
+set containing the empty clause rather than the empty set. Anyone relying on
+the boundary cases should pin them down first. This chapter describes the
+module as it is, not as a specified algebra.
 
 **Occurrence counts are per root, and per session.** A count read with one
 `Occur`'s key is meaningless for another root. The counts are properties, so
