@@ -346,7 +346,7 @@ second fails. This is why the example above names its constructors
 language is the convention that keeps independent clients out of each other's
 way. What signatures make disjoint is the *opcode space*, not the *name space*.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Origins
 
@@ -509,17 +509,18 @@ The whole mechanism is `CTree::make` in
 ```cpp
 size_t hk = calcTreeHash(n, ar, tbl);
 Tree   t  = gHashTable[hk % gHashTableSize];
-
+/* … */
 while (t && !t->equiv(n, ar, tbl)) {
     t = t->fNext;
 }
 
 if (t) { statsTreeReused();  return t; }      // the term already exists
-else   { statsTreeCreated(); /* allocate */ }
+else   { statsTreeCreated(); /* grow if needed, then allocate */ }
 ```
 
-Everything else is detail around those seven lines. `CTree` itself is declared
-at [tree.hh:138](tlib/tree.hh#L138); the public constructors `tree(n)`,
+Everything else is detail around those seven lines. `CTree` itself is defined
+at [tree.hh:138](tlib/tree.hh#L138) (forward-declared at
+[tree.hh:107](tlib/tree.hh#L107)); the public constructors `tree(n)`,
 `tree(n, a)`, … `tree(n, br)` at
 [tree.hh:350-389](tlib/tree.hh#L350-L389) are thin wrappers over `make`. The
 `CTree` constructors are protected, so no caller can bypass the table and
@@ -554,7 +555,7 @@ that are worth knowing about now, since later sections rely on them.
 
 **`fSerial`** ([tree.hh:252](tlib/tree.hh#L252)) is a counter incremented at
 each construction, and `std::less<CTree*>` is specialised to compare on it
-([tree.hh:341](tlib/tree.hh#L341)) so that `std::map<Tree, …>` iterates in a
+([tree.hh:341](tlib/tree.hh#L341), declared at [117](tlib/tree.hh#L117)) so that `std::map<Tree, …>` iterates in a
 defined order instead of in address order. Determinism of the compiler output
 depends on this: addresses vary from run to run for reasons no one controls,
 whereas a serial is a function of construction order alone — so a deterministic
@@ -647,7 +648,7 @@ no obvious owner to release it. The library does not attempt reclamation during
 a session at all — see §4 for what it does instead, and why that suits a
 compiler.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Origins
 
@@ -899,7 +900,7 @@ after 10 000 attempts.
 
 One detail in `Symbol::get` is easy to miss and shows up in the invariants
 below: every character below 32 is replaced by a space before the name is
-hashed ([symbol.cpp:135](tlib/symbol.cpp#L135)). Names are normalised, so
+hashed ([symbol.cpp:136-138](tlib/symbol.cpp#L136-L138)). Names are normalised, so
 `symbol("a\nb")` and `symbol("a b")` are the *same* symbol
 ([tour-examples.cpp:132](tour-examples.cpp#L132)).
 
@@ -942,7 +943,7 @@ alpha-equivalent recursive terms land on the same pointer.
 `Node`, its equality, its canonical hash and its predicates. The pointer
 payload exists precisely so that this is rarely necessary.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Origins
 
@@ -1081,7 +1082,11 @@ class TLIB_API Garbageable {
 };
 ```
 
-`CTree`, `Symbol` and `Node` all derive from it. `operator new`
+`CTree`, `Symbol` and `Node` all derive from it — though only the first two
+matter in practice, since a `Node` almost always lives *by value* inside a
+`CTree` or a client's structure, and a subobject never passes through
+`Garbageable::operator new`. The inheritance only takes effect for a `Node`
+allocated on its own, which does not happen. `operator new`
 ([garbageable.cpp:79](tlib/garbageable.cpp#L79)) allocates normally and then
 records the pointer in a global list; `cleanup()`
 ([garbageable.cpp:51](tlib/garbageable.cpp#L51)) walks that list and deletes
@@ -1170,7 +1175,7 @@ destructor, unused by the library itself but still live downstream, where
 Faust's audio types are `Type = P<AudioType>`. Read it as a null-safety
 convenience, never as ownership.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Origins
 
@@ -1338,13 +1343,22 @@ arbitrary C++ types.
 Two refinements are where the engineering shows, and both are worth reading in
 the source because both record what was measured.
 
-**`fFastProperty`** ([tree.hh:297](tlib/tree.hh#L297)) is a single dedicated
+**`fFastProperty`** ([tree.hh:299](tlib/tree.hh#L299)) is a single dedicated
 slot on every `CTree`, bypassing the map entirely, for one caller-chosen hot
-property — in Faust, `propagate`, about 20% of all property traffic measured
-over `examples/*.dsp`. The warning attached to it matters: unlike
-`setProperty`, this slot is **not namespaced by key**, so exactly one consumer
-in the whole program may claim it, and two unrelated users of it would silently
+property. Unlike `setProperty` it is **not namespaced by key**, so at most one
+consumer in the whole program may claim it; two unrelated users would silently
 overwrite each other.
+
+It is currently **unclaimed**, and the story of how it got that way is worth
+more than the mechanism. Its historical claimant was Faust's propagation memo,
+some 20% of all property traffic when it was measured — and it moved out, to a
+plain table keyed by ordinary C++ data. The reason was measured rather than
+assumed: on large parallel structures the dominant cost was not the map lookup
+the slot was avoiding, but *building the hash-consed key* — a cons list of
+hundreds of entries per call, paid on cache hits too. Which is the same lesson
+`property2` teaches below, arriving from the opposite direction: the per-node
+scheme is not universally the right one, and only measurement says which
+access pattern you have.
 
 **`property2`** ([property.hh:157](tlib/property.hh#L157) and its `Tree`
 specialisation at [property.hh:251](tlib/property.hh#L251)) memoises the binary
@@ -1404,8 +1418,9 @@ not.** The default constructor guarantees isolation through a fresh symbol.
 The named constructor deliberately gives that up, and two components using the
 same name share one annotation, whether or not they intended to.
 
-**`fFastProperty` has exactly one legitimate owner.** It is not keyed, so it
-offers no protection at all against a second claimant.
+**`fFastProperty` admits at most one owner, and currently has none.** It is not
+keyed, so it offers no protection whatever against a second claimant — the
+discipline is entirely by convention.
 
 **`property2<Tree>` is not part of a tree's property list.** It keeps its own
 table, so `clearProperties()` on a node does not clear it, and a debugging pass
@@ -1418,7 +1433,7 @@ is only reclaimed at the end of the session, like everything else.
 **None of this is thread-safe.** Properties are ordinary mutable state on
 shared nodes, and §4's single-thread rule covers them.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Origins
 
@@ -1625,7 +1640,7 @@ the ancestors of the general rewriting machinery, and `substitute` is one of
 the two functions whose per-call fresh keys produced the pathological node
 carrying tens of thousands of properties that §5 mentioned.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Invariants and non-goals
 
@@ -1871,7 +1886,7 @@ mechanism, fold included, is `checkArithmeticSignatureFold()` in
 [tests.cpp:255](tests.cpp#L255); the full specification is
 [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md).
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Invariants and non-goals
 
@@ -2120,7 +2135,11 @@ holder of that pointer means. The rules
 
 The consequence for every transformation in the library is spelled out in the
 same comment: *a transformation never redefines, it maps every variable to a
-fresh one*. §9's rewriting is built on that rule.
+fresh one*. §9's rewriting is built on that rule. And the error is raised
+*before* the property is written, so a violation never corrupts the existing
+definition — it stops the compilation instead. Making it fatal was not a
+formality: the change immediately exposed two of TLIB's own tests, written
+before the protocol, that redefined variables themselves.
 
 `calcTreeAperture` ([recursive-tree.cpp:263](tlib/recursive-tree.cpp#L263))
 implements the three rules above, and is called once per node from the `CTree`
@@ -2176,7 +2195,7 @@ instance-independent is the resulting **order**, because `fCanonKey` (§3)
 strips the instance from those names. For a true canonical form, `deBruijn2Sym`
 is the function to call.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Invariants and non-goals
 
@@ -2295,7 +2314,10 @@ returns a term that is alpha-equivalent to its input, not equal to it.
 Rewriting is the *write* half of the library, where the previous chapters were
 mostly about reading. Every transformation a Faust compilation performs —
 normalising signal expressions, substituting, lowering to a form the code
-generator accepts — is a `treeRewrite` with a different rule.
+generator accepts — is one of the `treeRewrite` family with a different rule.
+In practice the workhorse is not the plain form but the *paired* one described
+below, since most real transformations need to consult the annotations of the
+original node while building from rewritten children.
 
 Its architectural value is the same as the fold's: the traversal, the sharing,
 the memoisation, the recursion discipline and the minimal reconstruction are
@@ -2423,7 +2445,7 @@ by the original while building from rewritten children, and exposes its memo so
 that nested arguments can be matched with their transforms. The full
 specification of both is [REWRITE-SPEC.md](REWRITE-SPEC.md).
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Invariants and non-goals
 
@@ -2691,7 +2713,7 @@ permanent. Only values that depend on the component being iterated are
 from `RecPlan` ([tree.hh:515](tlib/tree.hh#L515)), memoised one per root per
 session, so repeated analyses of the same term share one Tarjan run.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Invariants and non-goals
 
@@ -2853,7 +2875,7 @@ count to zero — the root does not occur inside itself. `specificKey`
 with `unique`, and `countOccurrences`
 ([occur.cpp:72-77](tlib/occur.cpp#L72-L77)) is the three-line traversal.
 
-*Code references verified at `9e26537`.*
+*Code references verified at `2346664`.*
 
 ### Invariants and non-goals
 
