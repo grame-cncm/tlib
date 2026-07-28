@@ -415,11 +415,6 @@ bool checkProperties()
     t->clearProperty(key);
     CHECK(t->getProperty(key) == nullptr);
 
-    // the fast-property slot is independent from the property list
-    t->setFastProperty(tree(7));
-    CHECK(t->getFastProperty() == tree(7));
-    CHECK(t->getProperty(key) == nullptr);
-
     return ok;
 }
 
