@@ -59,12 +59,12 @@ would be dishonest to pretend otherwise — the first concept needs a `Tree` to
 talk about at all, and mentions symbols and hash-consing well before their own
 chapters.
 
-Such forward references are signposts, and they carry a **footnote at their
-first appearance** giving a thumbnail definition — enough to follow the
-argument on the spot — and naming the section where the concept is properly
-developed. Nothing in an argument depends on the details a footnote defers, so
-a reader can safely take the thumbnail and move on, and a reader who prefers to
-resolve a term before meeting it can jump ahead.
+Such forward references are signposts. A term used before its own chapter is
+defined on the spot in a **framed definition**, giving enough to follow the
+current argument and naming the section that develops it properly. Nothing in
+an argument depends on what such a box defers, so a reader can take the
+thumbnail and move on, or jump ahead to resolve the term first. Footnotes are
+reserved for genuine asides — an etymology, a citation.
 
 ---
 
@@ -114,7 +114,7 @@ language costs exactly one new algebra — for the language above, a class with
 five short methods, one per constructor — and no new traversal code.
 
 The last piece is the observation that makes the whole thing click. Trees are
-themselves one of the algebras. Take the carrier `Tree`[^tree], and for `Add` supply
+themselves one of the algebras. Take the carrier `Tree`, and for `Add` supply
 the function that *builds* the node `Add(x, y)` instead of adding numbers.
 Folding a tree into that algebra rebuilds the same tree. That sounds useless,
 and it is exactly the point: the tree representation is not a privileged,
@@ -123,7 +123,13 @@ interpretation among the others — the one that happens to throw nothing away.
 That is what "syntax" means, made precise. And because it throws nothing away,
 every other interpretation can be obtained from it, in exactly one way.
 
-[^tree]: `Tree` is TLIB's one tree type: a pointer to a `CTree`, which holds a **node** and a vector of child trees. The node carries either a value — an integer, a floating-point number — or a symbol, which is how a constructor such as `Add` is written. So a leaf is a tree with no children, and `Add(x, y)` is a tree whose node is the symbol `Add` and whose two children are `x` and `y`. Developed in §3.
+::: definition [Tree]
+TLIB's one tree type: a pointer to a `CTree`, which holds a **node** and a
+vector of child trees. The node carries either a value — an integer, a
+floating-point number — or a symbol, which is how a constructor such as `Add`
+is written. A leaf is a tree with no children; `Add(x, y)` is a tree whose node
+is the symbol `Add` and whose two children are `x` and `y`. Developed in §3.
+:::
 
 ### Its role in TLIB
 
@@ -146,25 +152,44 @@ it, generically.* Every later concept in this document is a piece of that
 machinery, and each one is justified by a demand the fold makes:
 
 - the fold must get from a constructor to its operation **in constant time**,
-  whatever the size of the signature — hence interned[^intern] symbols carrying
-  dense constructor opcodes[^opcode] (§3, §7);
+  whatever the size of the signature — hence interned symbols carrying dense
+  constructor opcodes (§3, §7);
 - the interpretation of a term must depend **only on the term**, never on how
   or when it was built — hence hash-consing (§2), which makes structurally
   equal terms literally the same object;
 - since the value depends only on the term, a shared subterm need be
-  interpreted **only once** — hence properties (§5), which memoise[^memo] a
-  fold's results on the nodes themselves and bring a traversal back down to the
-  size of the shared graph rather than of the term it denotes;
-- and terms in a real compiler are recursive[^rec], which the definitions above
-  do not cover at all — hence recursive terms (§8) and fixed points (§10).
+  interpreted **only once** — hence properties (§5), which memoise a fold's
+  results on the nodes themselves and bring a traversal back down to the size
+  of the shared graph rather than of the term it denotes;
+- and terms in a real compiler are recursive, which the definitions above do
+  not cover at all — hence recursive terms (§8) and fixed points (§10).
 
-[^intern]: **Interning** means keeping one canonical object per distinct value, in a table, and handing out pointers to it — as compilers do for identifiers, so that comparing two names costs one pointer comparison. Developed for symbols in §3, and applied to whole trees in §2, where it is called hash-consing.
+Four of those words are used here before their own chapters:
 
-[^opcode]: An **opcode** here is just a small integer that identifies a constructor, so that a fold can dispatch through a jump table instead of comparing names. What makes them usable is that they are *dense* (0, 1, 2, … within a language) and *disjoint* (two languages never share one). Developed in §7.
+::: definition [Interning, opcode, memoisation, recursive term]
+**Interning** keeps one canonical object per distinct value in a table and
+hands out pointers to it — as compilers do for identifiers, so that comparing
+two names costs one pointer comparison (§3, and §2 where it is applied to whole
+trees under the name hash-consing).
 
-[^memo]: **Memoisation** is caching the results of a function so that a repeated call with the same argument returns the stored value instead of recomputing it. The term and the technique are due to Donald Michie, *Memo functions and machine learning*, Nature 218, 1968. It is only valid for a function whose result depends on its argument alone, which is why §1's uniqueness property and §2's pointer identity have to come first. Developed in §5.
+An **opcode** is a small integer identifying a constructor, so that a fold can
+dispatch through a jump table instead of comparing names. What makes them
+usable is that they are *dense* and *disjoint* — consecutive within a language,
+never shared between two (§7).
 
-[^rec]: A **recursive term** is one that refers to itself, as in $x = 1 + x$ — a finite piece of syntax denoting an infinite tree. Every feedback loop in a Faust program is one. They break the definitions of this section twice over: the term is no longer finite, so a fold has no base case to stop at, and the value it should compute is no longer determined by the signature alone but by a choice of *fixed point*. Developed in §8 (the terms) and §10 (their attributes).
+**Memoisation**[^memo] caches a function's results so a repeated call with the
+same argument returns the stored value. It is valid only for a function whose
+result depends on its argument alone, which is why §1's uniqueness and §2's
+pointer identity have to come first (§5).
+
+A **recursive term** refers to itself, as in $x = 1 + x$: a finite piece of
+syntax denoting an infinite tree, and every feedback loop in a Faust program is
+one. It breaks the definitions of this section twice over — no base case for a
+fold to stop at, and a value no longer determined by the signature alone but by
+a choice of *fixed point* (§8 for the terms, §10 for their attributes).
+:::
+
+[^memo]: The term and the technique are Donald Michie's, *Memo functions and machine learning*, Nature 218, 1968.
 
 If you keep one sentence from this section: **TLIB is a high-performance
 carrier for syntax algebras, and everything else in it exists to make folds
@@ -204,7 +229,7 @@ That homomorphism is the fold — a *catamorphism*[^cata], in the vocabulary of
 functional programming, where the same construction over lists is the familiar
 `fold`.
 
-[^cata]: From the Greek *κατά*, "downwards": a catamorphism collapses a structure into a value, following its shape. The name and the systematic study of such operators come from Erik Meijer, Maarten Fokkinga and Ross Paterson, *Functional Programming with Bananas, Lenses, Envelopes and Barbed Wire*, FPCA 1991.
+[^cata]: From the Greek *κατά*, "downwards": a catamorphism collapses a structure into a value, following its shape. The name is Meijer, Fokkinga and Paterson's, *Bananas, Lenses, Envelopes and Barbed Wire*, FPCA 1991.
 
 Two consequences are worth stating separately, because they are what the rest
 of the library is built on.
@@ -325,7 +350,7 @@ well-formed arithmetic expression is something your fold discovers.
 
 **A symbol belongs to at most one signature, permanently.** Once
 `S.add("name")` has signed a symbol, the association and its opcode are
-immutable for the whole session[^session], and adding the same symbol to a second
+immutable for the whole session, and adding the same symbol to a second
 signature fails without disturbing the first. Constructor identity is therefore
 a property of the symbol, readable from any tree that uses it, at no cost per
 tree.
@@ -335,8 +360,12 @@ to an operation; that relation exists only inside a client's algebra, in the
 body of its fold. The same term may be interpreted by any number of algebras,
 and TLIB has no opinion about which one is "the" meaning.
 
-[^session]: A **session** is the interval between `tlib::init()` and `tlib::cleanup()` — for a compiler, one compilation. Every symbol and every tree belongs to the session that built it, nothing is reclaimed before it ends, and at `cleanup()` everything goes at once. Pointers do not survive it. Developed in §4.
-
+::: definition [Session]
+The interval between `tlib::init()` and `tlib::cleanup()` — for a compiler, one
+compilation. Every symbol and every tree belongs to the session that built it,
+nothing is reclaimed before it ends, and at `cleanup()` everything goes at
+once. Pointers do not survive it. Developed in §4.
+:::
 **Signatures partition one global namespace, they do not create their own.**
 Symbols are interned by name for the whole session (§3), and a symbol belongs
 to at most one signature. Two languages therefore cannot both register a
@@ -390,7 +419,7 @@ children is already there, you get a pointer to it. Otherwise it allocates one,
 records it, and gives you that. Two trees with the same content are never two
 objects — they are one object, pointed to twice.
 
-[^hashcons]: The name is Lisp's. `cons` is the Lisp constructor that builds a pair from two values; *hash-consing* is consing through a hash table, so that an identical pair is returned rather than built. Goto's original term for the resulting property was *monocopy*: at most one copy of any value exists in memory.
+[^hashcons]: The name is Lisp's: `cons` builds a pair, and *hash-consing* is consing through a hash table. Goto's term for the resulting property was *monocopy*.
 
 The consequences are larger than they look.
 
@@ -449,13 +478,22 @@ sharing does not *force* that choice, but it is what makes it the cheap one.
 Above: because equality is
 now free but *structural*, anything that should identify terms up to a richer
 equivalence has to be arranged by construction, by building a canonical
-form[^canonical] whose sharing then does the work. That is exactly the strategy
-§8 uses to make alpha-equivalent[^alpha] recursive terms be the same pointer.
+form whose sharing then does the work. That is exactly the strategy §8 uses
+to make alpha-equivalent recursive terms be the same pointer.
 
-[^canonical]: A **canonical form** is one chosen representative per equivalence class, computed by a function that maps every member of a class to that same representative. Its point here is that once terms are canonicalised, the coarser equivalence is decided by the structural equality this section provides — that is, by comparing two pointers. Used throughout, and put to work in §8.
+::: definition [Canonical form, alpha-equivalence]
+A **canonical form** is one chosen representative per equivalence class,
+computed by a function mapping every member of a class to that same
+representative. Its point here: once terms are canonicalised, the coarser
+equivalence is decided by the structural equality of this section — by
+comparing two pointers.
 
-[^alpha]: Two terms are **alpha-equivalent** when they differ only in the names of their bound variables: $λx.x$ and $λy.y$ are the same function written twice, and `rec(f, f+1)` and `rec(g, g+1)` are the same recursion. Names of bound variables carry no meaning, so a compiler that treats these as different terms duplicates work and misses sharing. Developed in §8.
-
+Two terms are **alpha-equivalent** when they differ only in the names of their
+bound variables: $λx.x$ and $λy.y$ are the same function written twice, and
+`rec(f, f+1)` and `rec(g, g+1)` the same recursion. Those names carry no
+meaning, so a compiler treating them as different terms duplicates work and
+misses sharing. Both are put to work in §8.
+:::
 One thing hash-consing does *not* buy is worth stating here, because it is the
 most common misunderstanding. Sharing the *storage* of a subterm does not share
 the *work* of traversing it. A fold written the obvious way over the 31-node
@@ -595,15 +633,22 @@ to enter canonical orderings.
 
 **`fAperture` and `fContains`** ([tree.hh:187-188](tlib/tree.hh#L187-L188)) are
 synthesised attributes: small facts about the whole subterm — how many free de
-Bruijn[^debruijn] levels it has, whether it contains a recursive node —
+Bruijn levels it has, whether it contains a recursive node —
 computed once in the constructor and read in $O(1)$ ever after. They are the
 degenerate case
 of the memoisation idea: an attribute that is a function of the term, and that
 TLIB knows about intrinsically, can simply live in the node. Attributes TLIB
 does not know about need the general mechanism of §5.
 
-[^debruijn]: The **de Bruijn** representation removes the names of bound variables: a variable is written as the number of binders standing between it and the one that binds it, so $λx.λy.x$ becomes $λ.λ.2$. The payoff is exactly what §2 is about — alpha-equivalent terms become *syntactically identical*, hence the same hash-consed pointer, with no renaming pass and no comparison modulo renaming. A term's **aperture** is how many of its de Bruijn references still point outside it, which is what makes it *open* or *closed*. Developed in §8.
-
+::: definition [de Bruijn representation, aperture]
+The **de Bruijn** representation removes the names of bound variables: a
+variable is written as the number of binders standing between it and the one
+that binds it, so $λx.λy.x$ becomes $λ.λ.2$. The payoff is exactly what §2 is
+about — alpha-equivalent terms become *syntactically identical*, hence the same
+hash-consed pointer, with no renaming pass. A term's **aperture** is how many
+of its de Bruijn references still point outside it, which is what makes it
+*open* or *closed*. Developed in §8.
+:::
 Two measurements on real Faust programs give the practical scale: about 72% of
 constructed trees never receive a single property
 ([tree.hh:161](tlib/tree.hh#L161)), which is why property lists are allocated
@@ -757,12 +802,18 @@ Two smaller consequences are worth flagging, because later sections rely on
 them. Because symbols have *names*, a hash derived from the name rather than
 the address is available, which is what lets §2's `canonHash` be reproducible
 across processes — the recursion bottoms out in a value, not in an address.
-And because names can be *generated*, TLIB can mint fresh symbols[^gensym] on
+And because names can be *generated*, TLIB can mint fresh symbols on
 demand, which is how §5 gives each property a private key and how §9 names the
 variables it introduces.
 
-[^gensym]: `unique("W")` returns a symbol named `W0`, `W1`, `W2`, … guaranteed not to collide with any existing one. The need is as old as Lisp macros, where the same operator is called `gensym`: a program that generates a binding must be able to name it without capturing a name the user chose. In TLIB it is used for the fresh variables introduced by rewriting (§9) and — less obviously — to give every `property` object a private key that no other property can collide with (§5).
-
+::: definition [Generated symbol]
+`unique("W")` returns a symbol named `W0`, `W1`, `W2`, … guaranteed not to
+collide with any existing one. The need is as old as Lisp macros, where the
+same operator is called `gensym`: a program that generates a binding must be
+able to name it without capturing a name the user chose. TLIB uses it for the
+fresh variables introduced by rewriting (§9) and — less obviously — to give
+every `property` object a private key (§5).
+:::
 ### More precisely
 
 Write $\mathrm{Sym}$ for the set of interned symbols. The set of nodes is a
