@@ -2414,28 +2414,42 @@ Recursion needs two more rules, and written in the $μ$-notation of §8 they are
 the textbook ones for a binder and a bound variable:
 
 ```math
-\dfrac{X'\ \text{fresh}\qquad σ[X ↦ X'] ⊢ t ⇒ t'}
+\dfrac{X ∉ \operatorname{dom}σ \qquad X' ∉ \operatorname{cod}σ \qquad σ[X ↦ X'] ⊢ t ⇒ t'}
       {σ ⊢ μX.\,t ⇒ μX'.\,t'}
       \quad\text{(rec)}
 ```
 
 ```math
-\dfrac{}{σ ⊢ X ⇒ σ(X)}
+\dfrac{X ∈ \operatorname{dom}σ}{σ ⊢ X ⇒ σ(X)}
       \quad\text{(var)}
 ```
 
-— crossing a binder chooses a fresh name, records the correspondence in $σ$, and
-rewrites the body under it; reaching a bound variable simply looks it up. This
-is ordinary capture-avoiding renaming, and the local rule is applied to neither:
-$μ$ and its variables are structure, not constructors of the client's language.
+— crossing a binder chooses a name not already used as a replacement, records
+the correspondence in $σ$, and rewrites the body under it; reaching a bound
+variable looks it up. This is ordinary capture-avoiding renaming, and the local
+rule is applied to neither: $μ$ and its variables are structure, not
+constructors of the client's language.
 
-Now the part worth the detour. Nothing in those two rules needs a side
-condition, because $μX.\,t$ and $X$ are *different syntactic forms* — one is
-plainly a binder, the other plainly a variable. But §8 established that TLIB
-represents them by **the same node**: one `SYMREC(X)` carries both roles, with
-the body hanging off it as a property. The representation has deliberately
-identified the binder with its bound occurrences, which is what buys the sharing
-of §8 and what makes the branches acyclic.
+The three conditions are not all of the same kind, and the difference is the
+subject of the rest of this section.
+
+$X' ∉ \operatorname{cod}σ$ is **freshness**, and it is what makes the renaming
+capture-avoiding: reusing a replacement already assigned to another variable
+would merge two distinct recursions. $X ∈ \operatorname{dom}σ$ in *(var)* is
+**definedness** — without it $σ(X)$ is not a value. A term reaching *(var)* with
+$X ∉ \operatorname{dom}σ$ has a free recursive variable, which is exactly the
+situation TLIB reports as a caller error, and the assertion quoted later in this
+section is where it surfaces.
+
+$X ∉ \operatorname{dom}σ$ in *(rec)* is different in kind. In the pure calculus
+it would be unnecessary, and in fact wrong to demand: an inner $μX$ shadows an
+outer one, so $σ[X ↦ X']$ is an override and the two rules are told apart by the
+*shape* of the term — $μX.\,t$ is plainly a binder, $X$ plainly a variable. That
+condition is TLIB's, and it is there because §8 represents both by **the same
+node**: one `SYMREC(X)` carries the two roles, with the body hanging off it as a
+property. The representation has deliberately identified the binder with its
+bound occurrences, which is what buys the sharing of §8 and what keeps the
+branches acyclic.
 
 The traversal therefore cannot read off which role a given encounter plays. It
 decides by convention: **the first encounter with a recursive node acts as the
@@ -2452,7 +2466,11 @@ only grows, because two occurrences of the same recursive group anywhere in the
 term must receive the same $X'$ — otherwise the group would be duplicated.
 Strictly, then, the judgment is $σ ⊢ t ⇒ u ⊣ σ'$, a traversal carrying a
 *store* rather than a context. The rules above suppress that threading for
-readability, and the store they suppress is precisely the memo.
+readability, and the store they suppress is precisely the memo. This is also
+why $σ[X ↦ X']$ is always an **extension** and never an override: with
+$X ∉ \operatorname{dom}σ$ required by *(rec)*, a binding once made is never
+revised, which is what lets a single global table stand in for what would
+otherwise be a stack of scopes.
 
 Second, the memo does two jobs at once and only one of them is $σ$. On ordinary
 nodes it makes the judgment $t ⇒ u$ computed once per *pointer*, which turns a

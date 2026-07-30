@@ -273,26 +273,40 @@ recursives d'origine vers leurs remplacantes.
 En notation `μ`, les deux regles recursives sont celles de tout lieur :
 
 ```inference (rec)
-X' fraiche      σ[X ↦ X'] ⊢ t ⇒ t'
+X ∉ dom σ      X' ∉ cod σ      σ[X ↦ X'] ⊢ t ⇒ t'
 ---
 σ ⊢ μX.t ⇒ μX'.t'
 ```
 
 ```inference (var)
+X ∈ dom σ
 ---
 σ ⊢ X ⇒ σ(X)
 ```
 
-Franchir un lieur choisit un nom frais, l'enregistre dans `σ` et reecrit le
-corps sous cette extension ; atteindre une variable liee consulte `σ`. C'est du
-renommage evitant la capture, sans condition de bord — `μX.t` et `X` sont des
-**formes syntaxiques distinctes**, l'une manifestement un lieur, l'autre
-manifestement une variable. La regle utilisateur ne s'applique ni a l'une ni a
+Franchir un lieur choisit un nom non deja utilise comme remplacant,
+l'enregistre dans `σ` et reecrit le corps sous cette extension ; atteindre une
+variable liee consulte `σ`. La regle utilisateur ne s'applique ni a l'une ni a
 l'autre : `μ` et ses variables sont de la structure, pas des constructeurs du
 langage client.
 
-**C'est la representation qui cree la difficulte, pas la theorie.** TLIB
-represente `μX.t` et `X` par **le meme noeud** : un `SYMREC(X)` porte les deux
+Les trois conditions ne sont pas de meme nature :
+
+- `X' ∉ cod σ` est la **fraicheur**, ce qui rend le renommage evitant la
+  capture : reutiliser un remplacant deja attribue fusionnerait deux recursions
+  distinctes ;
+- `X ∈ dom σ` dans *(var)* est la **definitude** — sans elle `σ(X)` n'est pas
+  une valeur. Un terme atteignant *(var)* avec `X ∉ dom σ` a une variable
+  recursive libre : c'est exactement ce que le `TLIB_ASSERT` du cas rec
+  signale comme *caller error* ;
+- `X ∉ dom σ` dans *(rec)* est d'une autre espece. Dans le calcul pur elle
+  serait inutile et meme fausse a exiger — un `μX` interne masque un `μX`
+  externe, donc `σ[X ↦ X']` y est un ecrasement, et les deux regles se
+  distinguent par la **forme** du terme. Cette condition-la est celle de TLIB,
+  et la suite explique pourquoi.
+
+**C'est la representation qui cree cette derniere condition, pas la theorie.**
+TLIB represente `μX.t` et `X` par **le meme noeud** : un `SYMREC(X)` porte les deux
 roles, le corps pendu en propriete. Cette identification est voulue — c'est
 elle qui donne le partage du chapitre `rec`/`ref` et qui garde les branches
 acycliques — mais elle prive la traversee de tout moyen de lire quel role joue
@@ -319,7 +333,10 @@ Deux reserves subsistent.
   ou dans le terme doivent recevoir la meme `X'` — sinon le groupe serait
   duplique. Le jugement exact est donc `σ ⊢ t ⇒ u ⊣ σ'`, une traversee portant
   un **etat** et non un contexte. Les regles ci-dessus taisent ce fil, et
-  l'etat qu'elles taisent est precisement le memo.
+  l'etat qu'elles taisent est precisement le memo. C'est aussi pourquoi
+  `σ[X ↦ X']` est toujours une **extension** et jamais un ecrasement : avec
+  `X ∉ dom σ` exigee par *(rec)*, une liaison posee n'est jamais revisee, ce
+  qui permet a une table globale unique de tenir lieu de pile de portees.
 - **Le memo fait deux metiers.** Sur les noeuds ordinaires il rend le jugement
   calcule une fois par pointeur : c'est du partage, donc une optimisation. Sur
   les noeuds recursifs il **est** `σ`, sans quoi les regles ne sont meme pas
