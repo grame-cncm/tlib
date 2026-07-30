@@ -273,7 +273,7 @@ recursives d'origine vers leurs remplacantes.
 En notation `μ`, les deux regles recursives sont celles de tout lieur :
 
 ```inference (rec)
-X ∉ dom σ      X' ∉ vars(t) ∪ dom σ ∪ cod σ      σ[X ↦ X'] ⊢ t ⇒ t'
+X ∉ dom σ      X' fraiche      σ[X ↦ X'] ⊢ t ⇒ t'
 ---
 σ ⊢ μX.t ⇒ μX'.t'
 ```
@@ -292,18 +292,16 @@ langage client.
 
 Les trois conditions ne sont pas de meme nature :
 
-- la seconde condition de *(rec)* est la **fraicheur**, et ses trois parties
-  ecartent chacune un accident different : eviter `cod σ` empeche de reutiliser
-  un remplacant deja attribue, ce qui fusionnerait deux recursions distinctes ;
-  eviter `dom σ` empeche la collision avec une variable source pas encore
-  atteinte ; eviter `vars(t)` est la plus facile a oublier — la reconstruction
-  minimale recopie **verbatim** les parties inchangees de `t` dans `t'`, donc un
-  nom deja porte par un lieur interne a `t` serait capture par le nouveau.
-  TLIB exige en fait davantage : les symboles etant internes globalement et
-  `SYMREC(X)` hash-conse sur sa seule variable, un nom de variable est une
-  **identite de session**, et la fraicheur doit donc etre globale a la session
-  et non locale au jugement — d'ou l'appel a `unique()` plutot qu'un nom absent
-  du terme courant ;
+- `X'` **fraiche** est la condition de bord habituelle de toute regle de
+  renommage, laissee a dessein sous forme de mot. L'ecrire en difference
+  d'ensembles est tentant — `X' ∉ vars(t) ∪ dom σ ∪ cod σ` a l'air precis — mais
+  toute enumeration de ce genre est incomplete : `μX.t` est rencontre **a
+  l'interieur** d'un terme plus grand dont les autres variables ne figurent
+  nulle part dans le jugement. TLIB donne au mot son sens le plus fort :
+  `unique()` bat un symbole qui n'a jamais existe dans la session. Ce n'est pas
+  du luxe — les symboles etant internes globalement et `SYMREC(X)` hash-conse
+  sur sa seule variable, un nom de variable est une **identite de session**, et
+  deux groupes portant le meme nom n'importe ou sont le meme noeud ;
 - `X ∈ dom σ` dans *(var)* est la **definitude** — sans elle `σ(X)` n'est pas
   une valeur. Un terme atteignant *(var)* avec `X ∉ dom σ` a une variable
   recursive libre : c'est exactement ce que le `TLIB_ASSERT` du cas rec
