@@ -15,6 +15,7 @@ date: 2026-07-06
 - **Reecriture gardee par annotation** — R1/R2 : regles a premisse sur le terme source, garde top-down `pre` + regle bottom-up `post`.
 - **La famille appariee `treeRewritePaired`** — regle `rule(original, rebuilt)`, memo expose, couture `defRule` sur les definitions recursives.
 - **Proprietes** — ce qui survit ou non a une reecriture.
+- **Composition des passes : regles librement, folds en pipeline** — pourquoi l'imbrication d'un fold dans une regle n'a pas de table coherente, et la regle qui en decoule.
 - **Relation avec tmap** — migration de l'usage historique.
 - **Exemple** — negation des nombres.
 - **Tests attendus** — la checklist de correction.
@@ -256,16 +257,12 @@ deux conversions utilisent des memos locaux, conformes a la presente spec
 persistant par propriete). Cette re-canonicalisation est un choix de
 l'appelant, pas un travail de `treeRewrite`.
 
-### Vue en regles : le cas recursif en demande deux, pas une
+### Vue en regles : le renommage, et ce que la representation efface
 
 L'algorithme ci-dessus traite le cas `rec` par le memo. Une presentation en
-regles ne peut pas faire cela — un memo est un dispositif d'implementation —
-et la difficulte est reelle : `rec(X, body)` et `ref(X)` sont **le meme
-noeud**, donc aucun test syntaxique ne distingue une definition d'une
-reference vers elle. Ce qui les distingue est que la traversee a **deja
-commence** sur cette variable. Le jugement doit donc porter cette information :
-on ecrit `σ ⊢ t ⇒ u`, ou `σ` est un renommage fini des variables recursives
-d'origine vers leurs remplacantes.
+regles ne peut pas faire cela — un memo est un dispositif d'implementation.
+Le jugement s'ecrit `σ ⊢ t ⇒ u`, ou `σ` est un renommage fini des variables
+recursives d'origine vers leurs remplacantes.
 
 ```inference (congruence)
 σ ⊢ ti ⇒ ui   pour tout i
@@ -273,25 +270,43 @@ d'origine vers leurs remplacantes.
 σ ⊢ f(t1,...,tn) ⇒ rule[ f(u1,...,un) ]
 ```
 
-```inference (rec-copy)
-X ∉ dom σ      σ[X ↦ X'] ⊢ body ⇒ body'      X' fraiche
+En notation `μ`, les deux regles recursives sont celles de tout lieur :
+
+```inference (μ)
+σ[X ↦ X'] ⊢ t ⇒ t'      X' fraiche
 ---
-σ ⊢ rec(X, body) ⇒ rec(X', body')
+σ ⊢ μX.t ⇒ μX'.t'
 ```
 
-```inference (rec-ref)
-σ(X) = X'
+```inference (var)
 ---
-σ ⊢ ref(X) ⇒ ref(X')
+σ ⊢ X ⇒ σ(X)
 ```
 
-Les deux regles recursives ne sont separees que par la condition de bord sur
-`dom σ`, qui est la contrepartie formelle de la pose de l'entree de memo
-**avant** la descente : l'extension de `σ` doit preceder la traversee du
-corps, sinon les occurrences recursives qu'il contient n'auraient rien vers
-quoi se resoudre.
+Franchir un lieur choisit un nom frais, l'enregistre dans `σ` et reecrit le
+corps sous cette extension ; atteindre une variable liee consulte `σ`. C'est du
+renommage evitant la capture, sans condition de bord — `μX.t` et `X` sont des
+**formes syntaxiques distinctes**, l'une manifestement un lieur, l'autre
+manifestement une variable. La regle utilisateur ne s'applique ni a l'une ni a
+l'autre : `μ` et ses variables sont de la structure, pas des constructeurs du
+langage client.
 
-Deux reserves sur cette presentation.
+**C'est la representation qui cree la difficulte, pas la theorie.** TLIB
+represente `μX.t` et `X` par **le meme noeud** : un `SYMREC(X)` porte les deux
+roles, le corps pendu en propriete. Cette identification est voulue — c'est
+elle qui donne le partage du chapitre `rec`/`ref` et qui garde les branches
+acycliques — mais elle prive la traversee de tout moyen de lire quel role joue
+une rencontre donnee. La traversee tranche par convention :
+
+> la **premiere** rencontre d'un noeud recursif joue le lieur, toutes les
+> suivantes jouent une occurrence liee.
+
+Le test `X ∈ dom σ` **est** cette decision, et la pose de l'entree de memo
+avant la descente est le moment ou la premiere rencontre revendique le role de
+lieur. `σ` n'est donc pas une commodite de mise en oeuvre : il reconstruit une
+distinction que la representation a effacee a dessein.
+
+Deux reserves subsistent.
 
 - **`σ` n'est pas a portee lexicale.** Il traverse toute la passe et ne fait
   que croitre, parce que deux occurrences d'un meme groupe recursif n'importe
@@ -327,7 +342,7 @@ f(x1,...,xn) → f(v1,...,vn)
 
 R1 replie tout terme dont l'intervalle certifie est reduit a un point ; R2
 est la congruence de la section precedente — la descente generique de
-`treeRewrite`, les deux regles recursives *(rec-copy)* / *(rec-ref)* et le fil
+`treeRewrite`, les deux regles de renommage *(μ)* / *(var)* et le fil
 `σ` compris.
 
 ::: note [La priorite de R1 sur R2 est semantique, pas une optimisation]

@@ -2410,55 +2410,56 @@ in a moment:
 — to rewrite a node, rewrite each child, reassemble, and apply the rule to the
 result. The rule sees only the rebuilt node, which is what makes it *local*.
 
-Recursion needs two rules rather than one, and this is where the presentation
-has to be careful, because §8 established that `rec(X, body)` and `ref(X)` are
-**the same node**. There is no syntactic test telling a definition from a
-reference to it. What distinguishes them is whether the traversal has already
-*started* on that variable — so the judgment has to carry that information, and
-$σ$ is exactly it: a finite map from the original recursive variables to their
-replacements.
+Recursion needs two more rules, and written in the $μ$-notation of §8 they are
+the textbook ones for a binder and a bound variable:
 
 ```math
-\dfrac{X ∉ \operatorname{dom}σ \qquad σ[X ↦ X'] ⊢ \text{body} ⇒ \text{body}'}
-      {σ ⊢ \mathrm{rec}(X, \text{body}) ⇒ \mathrm{rec}(X', \text{body}')}
-      \quad X' \text{ fresh}\quad\text{(rec-copy)}
+\dfrac{σ[X ↦ X'] ⊢ t ⇒ t'}
+      {σ ⊢ μX.\,t ⇒ μX'.\,t'}
+      \quad X' \text{ fresh}\quad\text{(μ)}
+\qquad\qquad
+\dfrac{}{σ ⊢ X ⇒ σ(X)}
+      \quad\text{(var)}
 ```
 
-```math
-\dfrac{σ(X) = X'}
-      {σ ⊢ \mathrm{ref}(X) ⇒ \mathrm{ref}(X')}
-      \quad\text{(rec-ref)}
-```
+— crossing a binder chooses a fresh name, records the correspondence in $σ$, and
+rewrites the body under it; reaching a bound variable simply looks it up. This
+is ordinary capture-avoiding renaming, and the local rule is applied to neither:
+$μ$ and its variables are structure, not constructors of the client's language.
 
-— the first time a recursive node is met, its variable is not yet in $σ$: a
-fresh $X'$ is chosen, $σ$ is extended, and the body is rewritten under the
-extension. Every later encounter with that same node finds $X$ in $σ$ and simply
-returns $\mathrm{ref}(X')$. The two rules are told apart *only* by the side
-condition on $\operatorname{dom}σ$, which is the formal counterpart of publishing
-the memo entry before descending: the extension of $σ$ must happen before the
-body is traversed, or the recursive occurrences inside it would have nothing to
-resolve to. That ordering is what makes rewriting a cyclic structure terminate.
+Now the part worth the detour. Nothing in those two rules needs a side
+condition, because $μX.\,t$ and $X$ are *different syntactic forms* — one is
+plainly a binder, the other plainly a variable. But §8 established that TLIB
+represents them by **the same node**: one `SYMREC(X)` carries both roles, with
+the body hanging off it as a property. The representation has deliberately
+identified the binder with its bound occurrences, which is what buys the sharing
+of §8 and what makes the branches acyclic.
 
-Two honest caveats about this presentation.
+The traversal therefore cannot read off which role a given encounter plays. It
+decides by convention: **the first encounter with a recursive node acts as the
+binder, every later one as a bound occurrence.** The test $X ∈ \operatorname{dom}σ$
+*is* that decision. So $σ$ is not bookkeeping added for convenience — it
+reconstructs a distinction the representation erased on purpose, and the
+implementation's memo entry, published before descending, is exactly the moment
+the first encounter claims the binder role.
+
+Two honest caveats remain.
 
 First, $σ$ is not lexically scoped. It is threaded through the *whole* pass and
 only grows, because two occurrences of the same recursive group anywhere in the
 term must receive the same $X'$ — otherwise the group would be duplicated.
 Strictly, then, the judgment is $σ ⊢ t ⇒ u ⊣ σ'$, a traversal carrying a
 *store* rather than a context. The rules above suppress that threading for
-readability, and the store they suppress is precisely the memo of the
-implementation.
+readability, and the store they suppress is precisely the memo.
 
-Second, the memo does two jobs at once, and only one of them is $σ$. On ordinary
-nodes it makes the judgment $t ⇒ u$ computed once per *pointer*, which is what
-turns a tree rewrite into a **shared-graph rewrite** — an optimisation, and a
-large one. On recursive nodes it is $σ$, without which the rules above are not
-even stated. The library's own header gives a memo-free version of the
-congruence rule; that version is exact for the non-recursive fragment and
-silently incomplete on the rest.
+Second, the memo does two jobs at once and only one of them is $σ$. On ordinary
+nodes it makes the judgment $t ⇒ u$ computed once per *pointer*, which turns a
+tree rewrite into a **shared-graph rewrite** — an optimisation, and a large one.
+On recursive nodes it is $σ$, without which the rules above cannot even be
+stated. Conflating the two is what makes the memo look optional.
 
-Now look at what *(rec-copy)* costs in practice. The three lines that implement
-it say something stronger than "the cycle is cut":
+Now look at what *(μ)* costs in practice. The three lines that implement it say
+something stronger than "the cycle is cut":
 
 ```cpp
 memo[t]      = ref(newVar);       // σ extended BEFORE the body is rewritten
@@ -2469,8 +2470,8 @@ return rec(newVar, newBody);      // only here does X′ acquire a definition
 Between the first line and the third, `X′` exists as a **reference to a
 variable that has no definition**. Not a definition that is empty — the
 property is simply absent, and §8's protocol makes an explicitly empty one
-(`rec(id, nil)`) a fatal erasure. The premise of *(rec-copy)* is discharged in
-that state: the body is rewritten *while* $X'$ is still undefined, which is the
+(`rec(id, nil)`) a fatal erasure. The premise of *(μ)* is discharged in that
+state: the body is rewritten *while* $X'$ is still undefined, which is the
 only order that lets the recursive occurrences inside it resolve at all.
 §8's identity of `ref(X′)` with `rec(X′, body′)` is what makes the entry already
 final *as a pointer*. But as a **term**, what the memo holds during that window
