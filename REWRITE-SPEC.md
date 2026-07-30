@@ -310,15 +310,37 @@ TLIB represente `μX.t` et `X` par **le meme noeud** : un `SYMREC(X)` porte les 
 roles, le corps pendu en propriete. Cette identification est voulue — c'est
 elle qui donne le partage du chapitre `rec`/`ref` et qui garde les branches
 acycliques — mais elle prive la traversee de tout moyen de lire quel role joue
-une rencontre donnee. La traversee tranche par convention :
+une rencontre donnee.
 
-> la **premiere** rencontre d'un noeud recursif joue le lieur, toutes les
-> suivantes jouent une occurrence liee.
+Elle n'a pourtant pas a deviner, et c'est ici que se place la premisse
+manquante : **une reecriture demarre sur un terme dont chaque variable
+recursive a une definition** (clos en ce sens — pas l'aperture de Bruijn, qui
+compte les references symboliques pour zero et ne dit rien la-dessus).
 
-Le test `X ∈ dom σ` **est** cette decision, et la pose de l'entree de memo
-avant la descente est le moment ou la premiere rencontre revendique le role de
-lieur. `σ` n'est donc pas une commodite de mise en oeuvre : il reconstruit une
-distinction que la representation a effacee a dessein.
+Sur un tel terme la lecture est forcee, non choisie. TLIB n'atteint le corps
+d'un lieur **qu'a travers le noeud du lieur lui-meme**, puisque le corps y est
+pendu en propriete ; une occurrence de `X` dans le corps de `X` est donc
+inatteignable sans passer d'abord par `SYMREC(X)`. La premiere rencontre d'un
+noeud recursif ne **peut** donc pas etre une occurrence liee : elle est
+necessairement a une position exterieure au corps, la ou siege un lieur.
+
+> la **premiere** rencontre d'un noeud recursif est son lieur, toutes les
+> suivantes sont des occurrences liees.
+
+C'est un petit theoreme, pas une convention. Le test `X ∈ dom σ` **est** cette
+lecture, et la pose de l'entree de memo avant la descente est le moment ou la
+premiere rencontre revendique le role de lieur. `σ` n'est donc pas une
+commodite de mise en oeuvre : il reconstruit une distinction que la
+representation a effacee a dessein.
+
+La reciproque est le cas d'erreur, et il est verifie plutot que suppose. Sur un
+terme **ouvert** — une reference dont la variable n'a jamais ete definie — la
+premiere rencontre reste une premiere, donc *(rec)* s'applique ; mais il n'y a
+pas de corps a extraire, et le `TLIB_ASSERT` du cas rec se declenche. La
+premisse de cloture n'est donc pas une hypothese accessoire de la
+presentation : c'est exactement la condition sous laquelle la lecture
+« premiere rencontre = lieur » est correcte, et sa violation est detectee au
+lieu d'etre silencieusement mal lue.
 
 C'est aussi la reconciliation avec *Rec et ref : un seul cas a traiter* : le
 code n'a qu'un cas la ou les regles en ont deux, parce que ce cas unique

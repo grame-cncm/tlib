@@ -593,8 +593,9 @@ that are worth knowing about now, since later sections rely on them.
 
 **`fSerial`** ([tree.hh:252](tlib/tree.hh#L252)) is a counter incremented at
 each construction, and `std::less<CTree*>` is specialised to compare on it
-([tree.hh:341](tlib/tree.hh#L341), declared at [117](tlib/tree.hh#L117)) so that `std::map<Tree, …>` iterates in a
-defined order instead of in address order. Determinism of the compiler output
+([tree.hh:341](tlib/tree.hh#L341), declared at [117](tlib/tree.hh#L117)) so
+that `std::map<Tree, …>` iterates in a defined order instead of address
+order. Determinism of the compiler output
 depends on this: addresses vary from run to run for reasons no one controls,
 whereas a serial is a function of construction order alone — so a deterministic
 program fed the same input reproduces the same serials. The order is history-
@@ -2436,10 +2437,10 @@ subject of the rest of this section.
 $X' ∉ \operatorname{cod}σ$ is **freshness**, and it is what makes the renaming
 capture-avoiding: reusing a replacement already assigned to another variable
 would merge two distinct recursions. $X ∈ \operatorname{dom}σ$ in *(var)* is
-**definedness** — without it $σ(X)$ is not a value. A term reaching *(var)* with
-$X ∉ \operatorname{dom}σ$ has a free recursive variable, which is exactly the
-situation TLIB reports as a caller error, and the assertion quoted later in this
-section is where it surfaces.
+**definedness** — without it $σ(X)$ is not a value. Note what the two conditions
+together exclude: a *free* recursive variable satisfies neither rule, so it is
+outside the system entirely. That is deliberate, and what TLIB does when handed
+one is the subject of the last paragraph of this section.
 
 $X ∉ \operatorname{dom}σ$ in *(rec)* is different in kind. In the pure calculus
 it would be unnecessary, and in fact wrong to demand: an inner $μX$ shadows an
@@ -2452,12 +2453,33 @@ bound occurrences, which is what buys the sharing of §8 and what keeps the
 branches acyclic.
 
 The traversal therefore cannot read off which role a given encounter plays. It
-decides by convention: **the first encounter with a recursive node acts as the
-binder, every later one as a bound occurrence.** The test $X ∈ \operatorname{dom}σ$
-*is* that decision. So $σ$ is not bookkeeping added for convenience — it
-reconstructs a distinction the representation erased on purpose, and the
-implementation's memo entry, published before descending, is exactly the moment
-the first encounter claims the binder role.
+does not have to guess, though, and this is where the missing premise belongs:
+**a rewrite starts on a term in which every recursive variable has a
+definition.** (Closed in that sense — not the de Bruijn aperture of §8, which
+counts symbolic references as zero and says nothing about this.)
+
+On such a term the reading is forced rather than chosen. TLIB reaches a
+binder's body *only through the binder's own node*, since §8 hangs the body off
+it as a property; so an occurrence of $X$ inside the body of $X$ is
+unreachable without passing through `SYMREC(X)` first. The first encounter with
+a recursive node therefore **cannot** be a bound occurrence — it is necessarily
+at a position outside the body, which is exactly where a binder sits.
+
+So the rule is a small theorem, not a convention: *the first encounter with a
+recursive node is its binder, every later one is a bound occurrence*, and the
+test $X ∈ \operatorname{dom}σ$ is that reading. $σ$ is not bookkeeping added for
+convenience — it reconstructs a distinction the representation erased on
+purpose, and the memo entry published before descending is the moment the first
+encounter claims the binder role.
+
+The converse is the failure case, and it is checked rather than assumed. Hand
+the traversal an *open* term — a reference whose variable was never defined —
+and its first encounter with that node is still a first, so *(rec)* is applied;
+but there is no body to extract, and the assertion quoted below fires. The
+closedness premise is therefore not an incidental hypothesis of the
+presentation. It is precisely the condition under which the first-encounter
+reading is sound, and its violation is detected instead of being silently
+misread.
 
 Two honest caveats remain.
 
@@ -2645,9 +2667,9 @@ specification of both is [REWRITE-SPEC.md](REWRITE-SPEC.md).
 is alpha-equivalent to the input, not pointer-equal — `areEquiv`, not `==`.
 This surprises everyone once, so it is pinned by a test
 ([tour-examples.cpp:317](tour-examples.cpp#L317)), next to the non-recursive
-case where the identity rule does return the very same pointer. It is forced by §8: reusing the variable would be
-a redefinition, and the in-place variant that once did so was removed for
-exactly that reason.
+case where the identity rule does return the very same pointer. It is forced by
+§8: reusing the variable would be a redefinition, and the in-place variant that
+once did so was removed for exactly that reason.
 
 **The rule is never applied to recursive nodes.** `treeRewrite` traverses a
 definition through its body and handles the binder itself, so a rule that
