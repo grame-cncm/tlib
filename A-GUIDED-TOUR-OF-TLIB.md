@@ -2422,32 +2422,59 @@ alpha-renames:
 already have a target. This is the step that makes rewriting a cyclic structure
 terminate: the cycle is cut by an entry in the memo.
 
-That fresh variable has a consequence which is easy to miss and expensive to
-discover. **A rewrite is not a function on terms; it is a function only modulo
-alpha-equivalence.** Run it twice on the same input and you get two results
-that are alpha-equivalent but not the same pointer, because each run mints new
-variables. In other words the transformation carries hidden state — the
-generator of fresh names.
+Read those three lines again in order, because they say something stronger than
+"the cycle is cut":
 
-Now recall §5's condition for memoisation: a value may be cached against an
-argument only if it is a function of that argument alone. A rewrite does not
-satisfy it. What rescues the memo is that the hidden state is *fixed for the
-duration of one call*: inside a single traversal each original maps to exactly
-one result, so the pass is a function for as long as it runs, and the table is
-consistent. The memo is born with the call and dies with it, and that is not an
-implementation detail — it is the whole of what makes it well defined.
+```cpp
+memo[t]      = ref(newVar);       // published BEFORE the body is rewritten
+Tree newBody = treeRewriteMemo(body, rule, memo);
+return rec(newVar, newBody);      // only here does X′ acquire a definition
+```
 
-Compose two such passes by **nesting** them — invoking a memoised rewrite from
-inside another rewrite's rule — and there is no consistent table to be had.
-Share the memo, and the inner pass meets trees the outer pass has just
-produced: fresh groups it has no entry for, which it dutifully renames again,
-so two copies of one recursive group survive into the output. Give the passes
-separate memos, and the inner one is re-entered from different points of the
-outer traversal, minting different variables for the *same* original each time,
-so the outer result becomes inconsistent with itself — which is worse. There is
-no third option: *the cache of a function-modulo-alpha, keyed by syntactic
-identity, is not a well-defined object*. The nesting is the error, not its
-implementation.
+Between the first line and the third, `X′` exists as a **reference to a
+variable that has no definition**. Not a definition that is empty — the
+property is simply absent, and §8's protocol makes an explicitly empty one
+(`rec(id, nil)`) a fatal erasure. Publishing the entry early is the point: it
+is what lets recursive occurrences inside the body resolve to something, and
+§8's identity of `ref(X′)` with `rec(X′, body′)` is what makes the entry already
+final *as a pointer*. But as a **term**, what the memo holds during that window
+is a promise, not a value.
+
+So the memo is not one thing. For a subterm already finished it is a sharing
+cache in the sense of §5. For a recursive group under construction it is a
+table of **commitments** — knots tied so the traversal can terminate, redeemed
+only as it unwinds. And a commitment cannot be read as a result.
+
+Two consequences follow, and together they are the whole reason passes cannot
+be nested.
+
+**A rewrite's result cannot be consulted while it is being built.** A fold
+invoked from inside a rule runs in the middle of the outer traversal, so what it
+reaches — through the shared memo, or through the partly rebuilt tree handed to
+the rule — may be a variable whose definition does not exist yet. The library
+already names this situation: the assertion at
+[rewrite.hh:74-76](tlib/rewrite.hh#L74-L76) reports a symbolic reference whose
+variable was never defined as a **caller error**. What it is really detecting is
+someone reading an unfinished result.
+
+**Once built, the result is only one representative of its alpha class.** Each
+recursive case mints a fresh variable, so a rewrite is a function on terms only
+*modulo alpha*: a second run on the same input yields an alpha-equivalent term
+made of different pointers. A nested call arriving *after* a group is complete
+therefore finds no memo entry for it — the group was never an original of that
+pass — and rewrites it again, so two copies of one recursive group survive into
+the output.
+
+Neither failure has a cache fix, and it is worth seeing why the two obvious
+ones fail in opposite directions. Share the memo, and the inner pass re-renames
+the outer pass's fresh products: recursive state is duplicated. Separate the
+memos, and the inner pass is re-entered from several points of the outer
+traversal, minting different variables for the *same* original each time, so
+the outer result becomes inconsistent with itself — worse, because it is no
+longer even alpha-equivalent to anything the pass intended. There is no third
+option: *a table keyed by syntactic identity cannot be the cache of a function
+that is only defined up to renaming, and it certainly cannot be read while it
+still holds promises.* The nesting is the error, not its implementation.
 
 ::: warning [How rewriting passes may be composed]
 **Rules compose freely** — a rule may call other rules, examine the node, build
@@ -2463,9 +2490,10 @@ with a separate one.
 :::
 
 One nuance the rule does not forbid: a cache that survives *between* completed
-invocations of the **same** pass is legitimate. It caches the function as fixed
-at its first computation, which is a coherent object; what is incoherent is
-state shared between two transformations that are both in flight.
+invocations of the **same** pass is legitimate. Every entry in it is a finished
+term, and it caches the function as fixed at its first computation, which is a
+coherent object. What is incoherent is reading a table that still holds
+promises, or sharing one between two transformations both in flight.
 
 The guarded variant exists because some rules have a premise that is a
 **judgment about the source term** rather than a property of its shape — a
@@ -2588,6 +2616,12 @@ nothing, and a rewrite performed twice does the work twice. Memoising *across*
 completed calls of the same pass is legitimate and is the caller's business
 (§5, with the property-count pathology in mind). Sharing a memo between passes
 that are both running is not.
+
+**A result under construction is not a term.** While a recursive group is being
+rebuilt, its variable exists with no definition attached, and the memo entry
+standing for it is a commitment rather than a value. Nothing may read it —
+which is what the caller-error assertion in the recursive case is really
+guarding.
 
 **Never invoke a rewrite from inside a rule.** This is the sharpest rule in the
 chapter, and the one that cost the most to learn. The failure is silent and

@@ -425,19 +425,43 @@ structurelle ne sait pas lesquelles restent valides apres reecriture.
 
 ## Composition des passes : regles librement, folds en pipeline
 
-Le cas `rec` fabrique une variable fraiche. Une reecriture n'est donc pas une
-fonction sur les termes : c'est une fonction **modulo alpha**. Deux executions
-sur la meme entree rendent deux resultats alpha-equivalents mais de pointeurs
-distincts, parce que chacune bat de nouveaux noms. La transformation porte un
-etat cache : le generateur de noms.
+Le cas `rec` du driver construit son resultat par etapes, et l'etat
+intermediaire est visible dans le memo :
 
-Or le memo est indexe par identite syntaxique (des pointeurs hash-conses), et
-la memoisation n'est licite que pour une fonction dont le resultat ne depend
-que de son argument. Ce qui sauve le memo, c'est que l'etat cache est **fixe
-pour la duree d'un appel** : dans une traversee, chaque original a exactement
-un resultat, donc la passe est une fonction tant qu'elle dure. Le memo nait
-avec l'appel et meurt avec lui — ce n'est pas un detail d'implementation,
-c'est ce qui le rend bien defini.
+```cpp
+memo[t]      = ref(newVar);       // publie AVANT la reecriture du corps
+Tree newBody = treeRewriteMemo(body, rule, memo);
+return rec(newVar, newBody);      // X' n'acquiert sa definition qu'ici
+```
+
+Entre la premiere et la troisieme ligne, `X'` existe comme **reference a une
+variable sans definition**. Non pas une definition vide — la propriete est
+absente, et `rec(id, nil)` serait un effacement, que le protocole
+d'immutabilite rend fatal. Publier l'entree tot est voulu : c'est ce qui permet
+aux occurrences recursives du corps de se resoudre, et l'identite de `ref(X')`
+avec `rec(X', body')` est ce qui rend l'entree deja definitive *comme
+pointeur*. Mais **comme terme**, ce que le memo contient pendant cette fenetre
+est une promesse, pas une valeur.
+
+Le memo n'est donc pas un objet unique. Pour un sous-terme deja acheve, c'est
+un cache de partage. Pour un groupe recursif en construction, c'est une table
+d'**engagements** — des noeuds noues pour que la traversee termine, honores
+seulement quand elle se deroule. Un engagement ne se lit pas comme un resultat.
+
+Deux consequences, et c'est de leur conjonction que vient l'impossibilite de
+l'imbrication.
+
+1. **Le resultat d'une reecriture ne peut pas etre consulte pendant sa
+   construction.** Un fold invoque depuis une regle tourne au milieu de la
+   traversee externe : ce qu'il atteint — par le memo partage, ou par l'arbre
+   partiellement reconstruit passe a la regle — peut etre une variable dont la
+   definition n'existe pas encore. Le `TLIB_ASSERT(body != nullptr)` du cas rec
+   nomme deja ce cas « caller error » ; ce qu'il detecte reellement, c'est la
+   lecture d'un resultat inacheve.
+2. **Une fois acheve, le resultat n'est qu'un representant de sa classe
+   alpha.** Chaque cas rec bat une variable fraiche, donc la reecriture n'est
+   une fonction sur les termes que **modulo alpha** : une seconde execution sur
+   la meme entree rend un terme alpha-equivalent fait d'autres pointeurs.
 
 **L'imbrication n'a pas de table coherente.** Invoquer une reecriture memoisee
 depuis la regle d'une autre reecriture (ou de la meme) :
@@ -452,10 +476,12 @@ depuis la regle d'une autre reecriture (ou de la meme) :
   la traversee externe et bat des variables differentes pour un **meme**
   original, donc le resultat externe devient incoherent avec lui-meme. Pire.
 
-Il n'y a pas de troisieme option : *le cache d'une fonction-modulo-alpha,
-indexe par identite syntaxique, n'est pas un objet bien defini*. Le construct
-est fautif, pas son implementation — c'est pourquoi la reponse n'est pas une
-discipline de cache mais une regle de composition.
+Il n'y a pas de troisieme option, et les deux echouent en sens contraires :
+*une table indexee par identite syntaxique ne peut pas etre le cache d'une
+fonction definie seulement a renommage pres, et elle ne peut certainement pas
+etre lue tant qu'elle contient des promesses*. Le construct est fautif, pas son
+implementation — c'est pourquoi la reponse n'est pas une discipline de cache
+mais une regle de composition.
 
 ### La regle
 
