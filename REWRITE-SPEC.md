@@ -423,6 +423,82 @@ variante gardee. Tests : sections `treeRewritePaired` de `checkRewrite`
 Copier toutes les proprietes serait couteux, et une transformation
 structurelle ne sait pas lesquelles restent valides apres reecriture.
 
+## Composition des passes : regles librement, folds en pipeline
+
+Le cas `rec` fabrique une variable fraiche. Une reecriture n'est donc pas une
+fonction sur les termes : c'est une fonction **modulo alpha**. Deux executions
+sur la meme entree rendent deux resultats alpha-equivalents mais de pointeurs
+distincts, parce que chacune bat de nouveaux noms. La transformation porte un
+etat cache : le generateur de noms.
+
+Or le memo est indexe par identite syntaxique (des pointeurs hash-conses), et
+la memoisation n'est licite que pour une fonction dont le resultat ne depend
+que de son argument. Ce qui sauve le memo, c'est que l'etat cache est **fixe
+pour la duree d'un appel** : dans une traversee, chaque original a exactement
+un resultat, donc la passe est une fonction tant qu'elle dure. Le memo nait
+avec l'appel et meurt avec lui — ce n'est pas un detail d'implementation,
+c'est ce qui le rend bien defini.
+
+**L'imbrication n'a pas de table coherente.** Invoquer une reecriture memoisee
+depuis la regle d'une autre reecriture (ou de la meme) :
+
+- *memo partage* : la passe interne rencontre des arbres que la passe externe
+  vient de produire — des groupes frais dont elle n'a pas d'entree, qu'elle
+  re-alpha-renomme. Deux copies d'un meme groupe recursif survivent, donc de
+  l'etat recursif **duplique** dans le code genere. Mesure sur un programme
+  reel : 15 groupes recursifs au lieu de 13, une ligne a retard de 2048
+  echantillons doublee, +33 % a l'execution ;
+- *memos separes* : la passe interne est re-entree depuis plusieurs points de
+  la traversee externe et bat des variables differentes pour un **meme**
+  original, donc le resultat externe devient incoherent avec lui-meme. Pire.
+
+Il n'y a pas de troisieme option : *le cache d'une fonction-modulo-alpha,
+indexe par identite syntaxique, n'est pas un objet bien defini*. Le construct
+est fautif, pas son implementation — c'est pourquoi la reponse n'est pas une
+discipline de cache mais une regle de composition.
+
+### La regle
+
+1. **Les regles composent librement.** Une regle peut appeler d'autres regles,
+   examiner le noeud, construire ce qu'elle veut — localement, dans l'algebre.
+2. **Les folds composent en pipeline.** Chacun court jusqu'au bout avant le
+   suivant, memo ne et mort avec lui. L'alpha-equivalence etant une
+   congruence, une sequence de passes est bien definie meme si chaque passe
+   n'est une fonction qu'a renommage pres.
+3. **Un fold ne s'invoque jamais depuis une regle.** Ni avec un memo partage,
+   ni avec un memo separe.
+
+Si une regle a besoin d'une autre transformation, elle applique les **regles**
+de celle-ci localement, sans son driver.
+
+### Nuance licite
+
+Un cache persistant entre invocations **achevees** d'une **meme** passe reste
+licite : il memorise la fonction telle que fixee a son premier calcul, ce qui
+est un objet coherent. Ce qui ne l'est pas, c'est de l'etat partage entre deux
+transformations simultanement en vol.
+
+### Note historique
+
+L'ancienne conception tolerait l'imbrication parce que son memo par proprietes
+**reutilisait** les variables du terme reecrit, ce qui rendait la
+transformation syntaxiquement deterministe — au moyen exact de la redefinition
+que le protocole d'immutabilite des definitions recursives rend desormais
+fatale. Fermer ce trou a rendu la bibliotheque plus correcte et a decouvert une
+non-fondation restee latente derriere lui.
+
+Une extension du contrat du memo (poser `memo[resultat] = resultat` dans le cas
+rec du driver appaire, pour immuniser contre la re-entrance) a ete essayee puis
+revertee : elle decretait dans le cache que le produit d'une passe est un point
+fixe de cette passe, au lieu d'eliminer le construct qui rendait cela
+necessaire.
+
+### Detection
+
+La violation reste detectable par la mesure plutot que par la relecture :
+l'invariant a surveiller est *nombre de groupes recursifs == nombre de classes
+alpha*.
+
 ## Relation avec tmap
 
 `tmap` devient une primitive historique/legacy. La nouvelle API a exactement

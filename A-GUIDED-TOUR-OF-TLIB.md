@@ -375,7 +375,7 @@ second fails. This is why the example above names its constructors
 language is the convention that keeps independent clients out of each other's
 way. What signatures make disjoint is the *opcode space*, not the *name space*.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Origins
 
@@ -693,7 +693,7 @@ no obvious owner to release it. The library does not attempt reclamation during
 a session at all — see §4 for what it does instead, and why that suits a
 compiler.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Origins
 
@@ -994,7 +994,7 @@ alpha-equivalent recursive terms land on the same pointer.
 `Node`, its equality, its canonical hash and its predicates. The pointer
 payload exists precisely so that this is rarely necessary.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Origins
 
@@ -1239,7 +1239,7 @@ destructor, unused by the library itself but still live downstream, where
 Faust's audio types are `Type = P<AudioType>`. Read it as a null-safety
 convenience, never as ownership.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Origins
 
@@ -1494,7 +1494,7 @@ is only reclaimed at the end of the session, like everything else.
 **None of this is thread-safe.** Properties are ordinary mutable state on
 shared nodes, and §4's single-thread rule covers them.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Origins
 
@@ -1701,7 +1701,7 @@ the ancestors of the general rewriting machinery, and `substitute` is one of
 the two functions whose per-call fresh keys produced the pathological node
 carrying tens of thousands of properties that §5 mentioned.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Invariants and non-goals
 
@@ -1947,7 +1947,7 @@ mechanism, fold included, is `checkArithmeticSignatureFold()` in
 [tests.cpp:255](tests.cpp#L255); the full specification is
 [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md).
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Invariants and non-goals
 
@@ -2256,7 +2256,7 @@ instance-independent is the resulting **order**, because `fCanonKey` (§3)
 strips the instance from those names. For a true canonical form, `deBruijn2Sym`
 is the function to call.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Invariants and non-goals
 
@@ -2422,6 +2422,51 @@ alpha-renames:
 already have a target. This is the step that makes rewriting a cyclic structure
 terminate: the cycle is cut by an entry in the memo.
 
+That fresh variable has a consequence which is easy to miss and expensive to
+discover. **A rewrite is not a function on terms; it is a function only modulo
+alpha-equivalence.** Run it twice on the same input and you get two results
+that are alpha-equivalent but not the same pointer, because each run mints new
+variables. In other words the transformation carries hidden state — the
+generator of fresh names.
+
+Now recall §5's condition for memoisation: a value may be cached against an
+argument only if it is a function of that argument alone. A rewrite does not
+satisfy it. What rescues the memo is that the hidden state is *fixed for the
+duration of one call*: inside a single traversal each original maps to exactly
+one result, so the pass is a function for as long as it runs, and the table is
+consistent. The memo is born with the call and dies with it, and that is not an
+implementation detail — it is the whole of what makes it well defined.
+
+Compose two such passes by **nesting** them — invoking a memoised rewrite from
+inside another rewrite's rule — and there is no consistent table to be had.
+Share the memo, and the inner pass meets trees the outer pass has just
+produced: fresh groups it has no entry for, which it dutifully renames again,
+so two copies of one recursive group survive into the output. Give the passes
+separate memos, and the inner one is re-entered from different points of the
+outer traversal, minting different variables for the *same* original each time,
+so the outer result becomes inconsistent with itself — which is worse. There is
+no third option: *the cache of a function-modulo-alpha, keyed by syntactic
+identity, is not a well-defined object*. The nesting is the error, not its
+implementation.
+
+::: warning [How rewriting passes may be composed]
+**Rules compose freely** — a rule may call other rules, examine the node, build
+whatever it likes, locally, within the algebra.
+
+**Folds compose in a pipeline** — each runs to completion before the next
+begins, its memo born and dying with it. Alpha-equivalence is a congruence, so
+a sequence of passes is well defined even though each is only a function up to
+renaming.
+
+**A fold is never invoked from inside a rule.** Not with a shared memo, not
+with a separate one.
+:::
+
+One nuance the rule does not forbid: a cache that survives *between* completed
+invocations of the **same** pass is legitimate. It caches the function as fixed
+at its first computation, which is a coherent object; what is incoherent is
+state shared between two transformations that are both in flight.
+
 The guarded variant exists because some rules have a premise that is a
 **judgment about the source term** rather than a property of its shape — a
 type, an interval, any annotation computed by a previous analysis:
@@ -2507,7 +2552,7 @@ by the original while building from rewritten children, and exposes its memo so
 that nested arguments can be matched with their transforms. The full
 specification of both is [REWRITE-SPEC.md](REWRITE-SPEC.md).
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Invariants and non-goals
 
@@ -2538,10 +2583,28 @@ applies the rule exactly once per node; it does not re-apply until nothing
 changes. A rule that produces a redex its own pass would rewrite must either
 handle that itself or be run again by the caller.
 
-**The memo is per call.** Two rewrites with the same rule share nothing, and a
-rewrite performed twice does the work twice. Memoising *across* calls is the
-caller's business, and §5 is where to do it — with the property-count pathology
-in mind.
+**The memo is per call, and must be.** Two rewrites with the same rule share
+nothing, and a rewrite performed twice does the work twice. Memoising *across*
+completed calls of the same pass is legitimate and is the caller's business
+(§5, with the property-count pathology in mind). Sharing a memo between passes
+that are both running is not.
+
+**Never invoke a rewrite from inside a rule.** This is the sharpest rule in the
+chapter, and the one that cost the most to learn. The failure is silent and
+arrives late: on one real program a nested pass left 15 recursive groups where
+13 were correct, duplicating a 2048-sample delay line and costing a third of
+the generated code's runtime. No cache discipline avoids it — see *How
+rewriting passes may be composed* above. If a rule needs another
+transformation, apply that transformation's **rules** locally, without its
+driver, or run it as a separate pass.
+
+**This became an error only when recursive definitions became immutable.** The
+older design tolerated nesting because its memo *reused* the variables of the
+term it rewrote, which made the transformation syntactically deterministic — by
+means of exactly the redefinition that §8's protocol now makes fatal. Closing
+that hole made the library more correct and exposed an unsoundness that had
+been latent behind it, which is a fair description of how most of this chapter
+was learned.
 
 **Termination is guaranteed for the traversal, not for the rules.** The
 traversal always terminates, even on cyclic terms, because of the memo. A rule
@@ -2785,7 +2848,7 @@ permanent. Only values that depend on the component being iterated are
 from `RecPlan` ([tree.hh:515](tlib/tree.hh#L515)), memoised one per root per
 session, so repeated analyses of the same term share one Tarjan run.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Invariants and non-goals
 
@@ -2972,7 +3035,7 @@ count to zero — the root does not occur inside itself. `specificKey`
 with `unique`, and `countOccurrences`
 ([occur.cpp:72-77](tlib/occur.cpp#L72-L77)) is the three-line traversal.
 
-*Code references verified at `5784ba8`.*
+*Code references verified at `9432d5c`.*
 
 ### Invariants and non-goals
 
