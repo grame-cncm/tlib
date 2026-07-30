@@ -2415,7 +2415,9 @@ Recursion needs two more rules, and written in the $μ$-notation of §8 they are
 the textbook ones for a binder and a bound variable:
 
 ```math
-\dfrac{X ∉ \operatorname{dom}σ \qquad X' ∉ \operatorname{cod}σ \qquad σ[X ↦ X'] ⊢ t ⇒ t'}
+\dfrac{X ∉ \operatorname{dom}σ \qquad
+       X' ∉ \operatorname{vars}(t) ∪ \operatorname{dom}σ ∪ \operatorname{cod}σ \qquad
+       σ[X ↦ X'] ⊢ t ⇒ t'}
       {σ ⊢ μX.\,t ⇒ μX'.\,t'}
       \quad\text{(rec)}
 ```
@@ -2434,13 +2436,32 @@ constructors of the client's language.
 The three conditions are not all of the same kind, and the difference is the
 subject of the rest of this section.
 
-$X' ∉ \operatorname{cod}σ$ is **freshness**, and it is what makes the renaming
-capture-avoiding: reusing a replacement already assigned to another variable
-would merge two distinct recursions. $X ∈ \operatorname{dom}σ$ in *(var)* is
-**definedness** — without it $σ(X)$ is not a value. Note what the two conditions
-together exclude: a *free* recursive variable satisfies neither rule, so it is
-outside the system entirely. That is deliberate, and what TLIB does when handed
-one is the subject of the last paragraph of this section.
+The second condition of *(rec)* is **freshness**, and it has to be stated in
+full because each of its three parts rules out a different accident. Avoiding
+$\operatorname{cod}σ$ stops a replacement already assigned to another variable
+from being reused, which would merge two distinct recursions. Avoiding
+$\operatorname{dom}σ$ stops the new name from colliding with a source variable
+still to be reached. And avoiding $\operatorname{vars}(t)$ is the one easiest to
+overlook: minimal reconstruction means untouched parts of $t$ are carried into
+$t'$ *verbatim*, so a name already used by a binder inside $t$ would be captured
+by the new one.
+
+Even that is weaker than what TLIB actually needs. Symbols are interned
+globally (§3) and `SYMREC(X)` is hash-consed on its variable alone (§8), so a
+variable name is a **session-wide identity**: two groups given the same name
+anywhere in the session are the same node. Freshness must therefore be global
+to the session, not merely local to the judgment, and this is exactly why the
+implementation calls `unique()` rather than picking a name absent from the term
+at hand. A collision is not silent if it happens — the second definition of an
+already-defined variable is either identical, in which case the groups
+legitimately merge, or different, in which case §8's protocol makes it fatal —
+but the rule is written to prevent it, not to rely on it being caught.
+
+$X ∈ \operatorname{dom}σ$ in *(var)* is **definedness** — without it $σ(X)$ is
+not a value. Note what the conditions together exclude: a *free* recursive
+variable satisfies neither rule, so it is outside the system entirely. That is
+deliberate, and what TLIB does when handed one is the subject of the last
+paragraph of this section.
 
 $X ∉ \operatorname{dom}σ$ in *(rec)* is different in kind. In the pure calculus
 it would be unnecessary, and in fact wrong to demand: an inner $μX$ shadows an

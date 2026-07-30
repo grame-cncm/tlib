@@ -273,7 +273,7 @@ recursives d'origine vers leurs remplacantes.
 En notation `μ`, les deux regles recursives sont celles de tout lieur :
 
 ```inference (rec)
-X ∉ dom σ      X' ∉ cod σ      σ[X ↦ X'] ⊢ t ⇒ t'
+X ∉ dom σ      X' ∉ vars(t) ∪ dom σ ∪ cod σ      σ[X ↦ X'] ⊢ t ⇒ t'
 ---
 σ ⊢ μX.t ⇒ μX'.t'
 ```
@@ -292,9 +292,18 @@ langage client.
 
 Les trois conditions ne sont pas de meme nature :
 
-- `X' ∉ cod σ` est la **fraicheur**, ce qui rend le renommage evitant la
-  capture : reutiliser un remplacant deja attribue fusionnerait deux recursions
-  distinctes ;
+- la seconde condition de *(rec)* est la **fraicheur**, et ses trois parties
+  ecartent chacune un accident different : eviter `cod σ` empeche de reutiliser
+  un remplacant deja attribue, ce qui fusionnerait deux recursions distinctes ;
+  eviter `dom σ` empeche la collision avec une variable source pas encore
+  atteinte ; eviter `vars(t)` est la plus facile a oublier — la reconstruction
+  minimale recopie **verbatim** les parties inchangees de `t` dans `t'`, donc un
+  nom deja porte par un lieur interne a `t` serait capture par le nouveau.
+  TLIB exige en fait davantage : les symboles etant internes globalement et
+  `SYMREC(X)` hash-conse sur sa seule variable, un nom de variable est une
+  **identite de session**, et la fraicheur doit donc etre globale a la session
+  et non locale au jugement — d'ou l'appel a `unique()` plutot qu'un nom absent
+  du terme courant ;
 - `X ∈ dom σ` dans *(var)* est la **definitude** — sans elle `σ(X)` n'est pas
   une valeur. Un terme atteignant *(var)* avec `X ∉ dom σ` a une variable
   recursive libre : c'est exactement ce que le `TLIB_ASSERT` du cas rec
