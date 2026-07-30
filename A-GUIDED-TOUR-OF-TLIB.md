@@ -2414,10 +2414,12 @@ Recursion needs two more rules, and written in the $μ$-notation of §8 they are
 the textbook ones for a binder and a bound variable:
 
 ```math
-\dfrac{σ[X ↦ X'] ⊢ t ⇒ t'}
+\dfrac{X'\ \text{fresh}\qquad σ[X ↦ X'] ⊢ t ⇒ t'}
       {σ ⊢ μX.\,t ⇒ μX'.\,t'}
-      \quad X' \text{ fresh}\quad\text{(μ)}
-\qquad\qquad
+      \quad\text{(rec)}
+```
+
+```math
 \dfrac{}{σ ⊢ X ⇒ σ(X)}
       \quad\text{(var)}
 ```
@@ -2458,7 +2460,7 @@ tree rewrite into a **shared-graph rewrite** — an optimisation, and a large on
 On recursive nodes it is $σ$, without which the rules above cannot even be
 stated. Conflating the two is what makes the memo look optional.
 
-Now look at what *(μ)* costs in practice. The three lines that implement it say
+Now look at what *(rec)* costs in practice. The three lines that implement it say
 something stronger than "the cycle is cut":
 
 ```cpp
@@ -2470,7 +2472,7 @@ return rec(newVar, newBody);      // only here does X′ acquire a definition
 Between the first line and the third, `X′` exists as a **reference to a
 variable that has no definition**. Not a definition that is empty — the
 property is simply absent, and §8's protocol makes an explicitly empty one
-(`rec(id, nil)`) a fatal erasure. The premise of *(μ)* is discharged in that
+(`rec(id, nil)`) a fatal erasure. The premise of *(rec)* is discharged in that
 state: the body is rewritten *while* $X'$ is still undefined, which is the
 only order that lets the recursive occurrences inside it resolve at all.
 §8's identity of `ref(X′)` with `rec(X′, body′)` is what makes the entry already

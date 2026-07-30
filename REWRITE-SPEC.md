@@ -272,8 +272,8 @@ recursives d'origine vers leurs remplacantes.
 
 En notation `μ`, les deux regles recursives sont celles de tout lieur :
 
-```inference (μ)
-σ[X ↦ X'] ⊢ t ⇒ t'      X' fraiche
+```inference (rec)
+X' fraiche      σ[X ↦ X'] ⊢ t ⇒ t'
 ---
 σ ⊢ μX.t ⇒ μX'.t'
 ```
@@ -305,6 +305,12 @@ Le test `X ∈ dom σ` **est** cette decision, et la pose de l'entree de memo
 avant la descente est le moment ou la premiere rencontre revendique le role de
 lieur. `σ` n'est donc pas une commodite de mise en oeuvre : il reconstruit une
 distinction que la representation a effacee a dessein.
+
+C'est aussi la reconciliation avec *Rec et ref : un seul cas a traiter* : le
+code n'a qu'un cas la ou les regles en ont deux, parce que ce cas unique
+delegue au memo ce que les regles disent syntaxiquement. Un seul cas dans
+l'implementation, deux regles dans la semantique — ce n'est pas une divergence,
+c'est la mesure exacte de ce que le partage de `SYMREC` fait payer.
 
 Deux reserves subsistent.
 
@@ -342,7 +348,7 @@ f(x1,...,xn) → f(v1,...,vn)
 
 R1 replie tout terme dont l'intervalle certifie est reduit a un point ; R2
 est la congruence de la section precedente — la descente generique de
-`treeRewrite`, les deux regles de renommage *(μ)* / *(var)* et le fil
+`treeRewrite`, les deux regles de renommage *(rec)* / *(var)* et le fil
 `σ` compris.
 
 ::: note [La priorite de R1 sur R2 est semantique, pas une optimisation]
