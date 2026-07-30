@@ -256,6 +256,55 @@ deux conversions utilisent des memos locaux, conformes a la presente spec
 persistant par propriete). Cette re-canonicalisation est un choix de
 l'appelant, pas un travail de `treeRewrite`.
 
+### Vue en regles : le cas recursif en demande deux, pas une
+
+L'algorithme ci-dessus traite le cas `rec` par le memo. Une presentation en
+regles ne peut pas faire cela — un memo est un dispositif d'implementation —
+et la difficulte est reelle : `rec(X, body)` et `ref(X)` sont **le meme
+noeud**, donc aucun test syntaxique ne distingue une definition d'une
+reference vers elle. Ce qui les distingue est que la traversee a **deja
+commence** sur cette variable. Le jugement doit donc porter cette information :
+on ecrit `σ ⊢ t ⇒ u`, ou `σ` est un renommage fini des variables recursives
+d'origine vers leurs remplacantes.
+
+```inference (congruence)
+σ ⊢ ti ⇒ ui   pour tout i
+---
+σ ⊢ f(t1,...,tn) ⇒ rule[ f(u1,...,un) ]
+```
+
+```inference (rec-copy)
+X ∉ dom σ      σ[X ↦ X'] ⊢ body ⇒ body'      X' fraiche
+---
+σ ⊢ rec(X, body) ⇒ rec(X', body')
+```
+
+```inference (rec-ref)
+σ(X) = X'
+---
+σ ⊢ ref(X) ⇒ ref(X')
+```
+
+Les deux regles recursives ne sont separees que par la condition de bord sur
+`dom σ`, qui est la contrepartie formelle de la pose de l'entree de memo
+**avant** la descente : l'extension de `σ` doit preceder la traversee du
+corps, sinon les occurrences recursives qu'il contient n'auraient rien vers
+quoi se resoudre.
+
+Deux reserves sur cette presentation.
+
+- **`σ` n'est pas a portee lexicale.** Il traverse toute la passe et ne fait
+  que croitre, parce que deux occurrences d'un meme groupe recursif n'importe
+  ou dans le terme doivent recevoir la meme `X'` — sinon le groupe serait
+  duplique. Le jugement exact est donc `σ ⊢ t ⇒ u ⊣ σ'`, une traversee portant
+  un **etat** et non un contexte. Les regles ci-dessus taisent ce fil, et
+  l'etat qu'elles taisent est precisement le memo.
+- **Le memo fait deux metiers.** Sur les noeuds ordinaires il rend le jugement
+  calcule une fois par pointeur : c'est du partage, donc une optimisation. Sur
+  les noeuds recursifs il **est** `σ`, sans quoi les regles ne sont meme pas
+  enoncables. Confondre les deux est ce qui fait croire que le memo est
+  facultatif.
+
 ## Reecriture gardee par annotation
 
 Cas rencontre en portant la propagation de constantes du backend OCPP de
@@ -277,8 +326,9 @@ f(x1,...,xn) → f(v1,...,vn)
 ```
 
 R1 replie tout terme dont l'intervalle certifie est reduit a un point ; R2
-est la congruence (la descente generique de `treeRewrite`, memo et `rec`
-compris).
+est la congruence de la section precedente — la descente generique de
+`treeRewrite`, les deux regles recursives *(rec-copy)* / *(rec-ref)* et le fil
+`σ` compris.
 
 ::: note [La priorite de R1 sur R2 est semantique, pas une optimisation]
 Le systeme n'est pas confluent sous strategie libre : si on applique R2

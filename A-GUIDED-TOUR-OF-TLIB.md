@@ -2397,36 +2397,71 @@ fixed points of §10, which have to be re-run on the result.
 ### More precisely
 
 The basic traversal is the **congruence closure** of a local rule: rewrite the
-children, rebuild, apply the rule once to the rebuilt node. In inference-rule
-form, as the header itself writes it:
+children, rebuild, apply the rule once to the rebuilt node. Written as an
+inference rule, with $σ$ a renaming of recursive variables whose purpose appears
+in a moment:
 
 ```math
-\dfrac{\text{rule} ⊢ t_i ⇒ u_i \quad (\text{for every } i)}
-      {\text{rule} ⊢ f(t_1,…,t_n) ⇒ \text{rule}⟦\,f(u_1,…,u_n)\,⟧}
+\dfrac{σ ⊢ t_i ⇒ u_i \quad (\text{for every } i)}
+      {σ ⊢ f(t_1,…,t_n) ⇒ \text{rule}⟦\,f(u_1,…,u_n)\,⟧}
+      \quad\text{(congruence)}
 ```
 
 — to rewrite a node, rewrite each child, reassemble, and apply the rule to the
-result. The memo makes the judgment $t ⇒ u$ computed once per *pointer*, which
-turns a tree rewrite into a **DAG rewrite**.
+result. The rule sees only the rebuilt node, which is what makes it *local*.
 
-For a recursive definition the rule is not applied at all; the traversal
-alpha-renames:
+Recursion needs two rules rather than one, and this is where the presentation
+has to be careful, because §8 established that `rec(X, body)` and `ref(X)` are
+**the same node**. There is no syntactic test telling a definition from a
+reference to it. What distinguishes them is whether the traversal has already
+*started* on that variable — so the judgment has to carry that information, and
+$σ$ is exactly it: a finite map from the original recursive variables to their
+replacements.
 
 ```math
-\dfrac{\text{body}[\mathrm{var} := \mathrm{var}'] ⇒ \text{body}'}
-      {\mathrm{rec}(\mathrm{var}, \text{body}) ⇒ \mathrm{rec}(\mathrm{var}', \text{body}')}
+\dfrac{X ∉ \operatorname{dom}σ \qquad σ[X ↦ X'] ⊢ \text{body} ⇒ \text{body}'}
+      {σ ⊢ \mathrm{rec}(X, \text{body}) ⇒ \mathrm{rec}(X', \text{body}')}
+      \quad X' \text{ fresh}\quad\text{(rec-copy)}
 ```
 
-— a fresh variable, a rewritten body, and the memo bound to the new reference
-*before* descending, so that recursive occurrences encountered inside the body
-already have a target. This is the step that makes rewriting a cyclic structure
-terminate: the cycle is cut by an entry in the memo.
+```math
+\dfrac{σ(X) = X'}
+      {σ ⊢ \mathrm{ref}(X) ⇒ \mathrm{ref}(X')}
+      \quad\text{(rec-ref)}
+```
 
-Read those three lines again in order, because they say something stronger than
-"the cycle is cut":
+— the first time a recursive node is met, its variable is not yet in $σ$: a
+fresh $X'$ is chosen, $σ$ is extended, and the body is rewritten under the
+extension. Every later encounter with that same node finds $X$ in $σ$ and simply
+returns $\mathrm{ref}(X')$. The two rules are told apart *only* by the side
+condition on $\operatorname{dom}σ$, which is the formal counterpart of publishing
+the memo entry before descending: the extension of $σ$ must happen before the
+body is traversed, or the recursive occurrences inside it would have nothing to
+resolve to. That ordering is what makes rewriting a cyclic structure terminate.
+
+Two honest caveats about this presentation.
+
+First, $σ$ is not lexically scoped. It is threaded through the *whole* pass and
+only grows, because two occurrences of the same recursive group anywhere in the
+term must receive the same $X'$ — otherwise the group would be duplicated.
+Strictly, then, the judgment is $σ ⊢ t ⇒ u ⊣ σ'$, a traversal carrying a
+*store* rather than a context. The rules above suppress that threading for
+readability, and the store they suppress is precisely the memo of the
+implementation.
+
+Second, the memo does two jobs at once, and only one of them is $σ$. On ordinary
+nodes it makes the judgment $t ⇒ u$ computed once per *pointer*, which is what
+turns a tree rewrite into a **shared-graph rewrite** — an optimisation, and a
+large one. On recursive nodes it is $σ$, without which the rules above are not
+even stated. The library's own header gives a memo-free version of the
+congruence rule; that version is exact for the non-recursive fragment and
+silently incomplete on the rest.
+
+Now look at what *(rec-copy)* costs in practice. The three lines that implement
+it say something stronger than "the cycle is cut":
 
 ```cpp
-memo[t]      = ref(newVar);       // published BEFORE the body is rewritten
+memo[t]      = ref(newVar);       // σ extended BEFORE the body is rewritten
 Tree newBody = treeRewriteMemo(body, rule, memo);
 return rec(newVar, newBody);      // only here does X′ acquire a definition
 ```
@@ -2434,8 +2469,9 @@ return rec(newVar, newBody);      // only here does X′ acquire a definition
 Between the first line and the third, `X′` exists as a **reference to a
 variable that has no definition**. Not a definition that is empty — the
 property is simply absent, and §8's protocol makes an explicitly empty one
-(`rec(id, nil)`) a fatal erasure. Publishing the entry early is the point: it
-is what lets recursive occurrences inside the body resolve to something, and
+(`rec(id, nil)`) a fatal erasure. The premise of *(rec-copy)* is discharged in
+that state: the body is rewritten *while* $X'$ is still undefined, which is the
+only order that lets the recursive occurrences inside it resolve at all.
 §8's identity of `ref(X′)` with `rec(X′, body′)` is what makes the entry already
 final *as a pointer*. But as a **term**, what the memo holds during that window
 is a promise, not a value.
