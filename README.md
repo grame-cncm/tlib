@@ -162,9 +162,10 @@ complete contract and an arithmetic fold example are in
   `tlib::cleanup()` frees every tree and symbol at once and leaves the library
   ready for a new session. Any `Tree`/`Sym` obtained before cleanup is invalid
   after it.
-- **Deterministic ordering.** `std::less<CTree*>` is specialized to compare
-  stable serial numbers, not addresses, so anything iterated in tree order is
-  reproducible from run to run.
+- **Deterministic ordering.** The named comparator `treeorder` compares stable
+  serial numbers, not addresses, so anything iterated in tree order is
+  reproducible from run to run. Use the `TreeSet` / `TreeMap<V>` aliases: a
+  bare `std::set<Tree>` falls back to address order.
 - **Recursive-tree diagnostics.** `toDeBruijnString()` prints recursive trees
   inline with `rec(...)` / `ref(n)`. `toSymbolicString()` prints symbolic
   recursive graphs with bare symbolic names and a `with { ... }` block of

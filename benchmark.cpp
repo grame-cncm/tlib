@@ -209,7 +209,7 @@ static std::size_t countUnique(Tree t)
 
 static std::size_t distinctNodes(Tree t)
 {
-    std::set<Tree>    seen;
+    TreeSet           seen;
     std::vector<Tree> stack;
     stack.push_back(t);
     while (!stack.empty()) {

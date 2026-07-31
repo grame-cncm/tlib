@@ -42,7 +42,7 @@ static bool checkAux(bool cond, const char* expr, const char* file, int line)
 
 /// Count the DISTINCT nodes reachable from t : the size of the shared DAG, as
 /// opposed to the size of the term it denotes.
-static void collect(Tree t, std::set<Tree>& seen)
+static void collect(Tree t, TreeSet& seen)
 {
     if (!seen.insert(t).second) {
         return;  // already counted : this is the sharing, made visible
@@ -54,7 +54,7 @@ static void collect(Tree t, std::set<Tree>& seen)
 
 static std::size_t dagSize(Tree t)
 {
-    std::set<Tree> seen;
+    TreeSet seen;
     collect(t, seen);
     return seen.size();
 }

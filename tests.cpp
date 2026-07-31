@@ -1175,7 +1175,7 @@ bool checkErrorHandler()
 
 namespace {
 
-using NodeSet = std::set<Tree>;
+using NodeSet = TreeSet;
 
 // combine(node, kids) = {node} ∪ ⋃ kids. proj/rec are handled by the iterator, so
 // combine only ever sees ordinary nodes ; adding {node} captures each head it meets.

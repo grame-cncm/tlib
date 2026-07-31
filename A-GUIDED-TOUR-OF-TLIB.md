@@ -591,11 +591,12 @@ costs a walk down `fNext`, never a wrong answer.
 Beyond the sharing itself, `CTree` stores three things derived from the term
 that are worth knowing about now, since later sections rely on them.
 
-**`fSerial`** ([tree.hh:252](tlib/tree.hh#L252)) is a counter incremented at
-each construction, and `std::less<CTree*>` is specialised to compare on it
-([tree.hh:341](tlib/tree.hh#L341), declared at [117](tlib/tree.hh#L117)) so
-that `std::map<Tree, …>` iterates in a defined order instead of address
-order. Determinism of the compiler output
+**`fSerial`** ([tree.hh:262](tlib/tree.hh#L262)) is a counter incremented at
+each construction, and the named comparator `treeorder`
+([tree.hh:123](tlib/tree.hh#L123)) compares on it, so that an ordered container
+of trees — spelled `TreeSet` or `TreeMap<V>`
+([tree.hh:130-132](tlib/tree.hh#L130-L132)) — iterates in a defined order
+instead of address order. Determinism of the compiler output
 depends on this: addresses vary from run to run for reasons no one controls,
 whereas a serial is a function of construction order alone — so a deterministic
 program fed the same input reproduces the same serials. The order is history-
@@ -675,6 +676,19 @@ different trees. $Mul(x, 1)$ and $x$ are different trees. TLIB has no notion of
 which constructors are commutative, associative or neutral, and will not
 normalise anything on your behalf. Normalisation is a client's fold or rewrite
 (§9), and its output is shared just like any other term.
+
+**Ordered containers of trees must name their comparator.** A bare
+`std::set<Tree>` or `std::map<Tree, V>` falls back to address order and loses
+determinism, so `TreeSet` and `TreeMap<V>` exist and should always be used.
+This was once arranged by specialising `std::less<CTree*>` instead — which is
+undefined behaviour, since the standard reserves the pointer specialisation for
+the implementation's own pointer order. The latitude went unexploited for two
+decades and then was not: libc++ 20 rewrites a literal `std::less<T>` to the
+transparent `std::less<>` on a tree's *insert* path but not on its *lookup*
+path, so a container was built in one order and queried in another, and lookups
+began missing elements that were present — intermittently, depending on malloc
+addresses. A named comparator is not pattern-matched, both paths agree, and the
+undefined behaviour is gone.
 
 **Pointer values are meaningless outside the session.** Addresses vary between
 runs; `fSerial` is reproducible only for a given construction history; only
