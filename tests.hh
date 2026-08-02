@@ -29,3 +29,5 @@ bool checkOccurrences();
 bool checkErrorHandler();
 bool checkLifecycle();
 bool checkHashTableGrowth();
+
+bool checkDescend();

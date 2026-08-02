@@ -1477,3 +1477,59 @@ bool checkHashTableGrowth()
 
     return ok;
 }
+
+//-----------------------------------------------------------------------------
+// descend.hh : the generic DESCENDING (inherited) attribute. Conformance :
+// the path-count instantiation must agree with Occur on a shared DAG ; a
+// min-depth instantiation exercises a non-additive join ; recursive trees
+// terminate under the cut policy and grow monotonically with the rounds.
+//-----------------------------------------------------------------------------
+#include "descend.hh"
+
+bool checkDescend()
+{
+    bool ok = true;
+
+    // shared DAG : r = R(S(x, x), x) -- x has 3 occurrences (paths)
+    Tree x = tree(symbol("Dx"));
+    Tree s = tree(symbol("Ds"), x, x);
+    Tree r = tree(symbol("Dr"), s, x);
+
+    // path-count = Occur : contribution carries the parent count, join sums
+    auto counts = descendAttribute<int>(
+        r, 1, [](Tree, int, const int& pa) { return pa; },
+        [](const int& a, const int& b) { return a + b; });
+    Occur occ(r);
+    CHECK(counts.at(x) == 3 && occ.getCount(x) == 3);
+    CHECK(counts.at(s) == 1 && occ.getCount(s) == 1);
+    CHECK(counts.at(r) == 1);
+
+    // min-depth : contribution increments, join takes the minimum
+    auto depth = descendAttribute<int>(
+        r, 0, [](Tree, int, const int& pa) { return pa + 1; },
+        [](const int& a, const int& b) { return a < b ? a : b; });
+    CHECK(depth.at(r) == 0 && depth.at(s) == 1);
+    CHECK(depth.at(x) == 1);  // via the direct edge, not through s
+
+    // recursive tree : rec(f(ref(1))) once converted to symbolic form is
+    // cyclic ; the cut policy must terminate, and path-counts must grow
+    // with the rounds (truncated Kleene)
+    Tree cyc = deBruijn2Sym(rec(tree(symbol("Df"), ref(1))));
+    auto c0  = descendAttribute<int>(
+        cyc, 1, [](Tree, int, const int& pa) { return pa; },
+        [](const int& a, const int& b) { return a + b; }, 0);
+    auto c2 = descendAttribute<int>(
+        cyc, 1, [](Tree, int, const int& pa) { return pa; },
+        [](const int& a, const int& b) { return a + b; }, 2);
+    CHECK(!c0.empty() && !c2.empty());
+    long s0 = 0, s2 = 0;
+    for (auto& [t, v] : c0) {
+        s0 += v;
+    }
+    for (auto& [t, v] : c2) {
+        s2 += v;
+    }
+    CHECK(s2 >= s0);
+
+    return ok;
+}
