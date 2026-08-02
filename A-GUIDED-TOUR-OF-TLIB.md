@@ -19,6 +19,7 @@ library has the shape it has.
 - **Recursive terms** — finite syntax for infinite trees: de Bruijn and symbolic forms, and canonical sharing modulo alpha-equivalence.
 - **Rewriting** — bottom-up transformation of shared and cyclic terms, where memoisation becomes a termination argument.
 - **Fixed points** — computing attributes over recursive terms: Kleene ascent, widening and narrowing.
+- **Descending attributes** — the other direction: what a node inherits from its contexts, and why sharing makes that a question rather than a lookup.
 - **Optional modules** — boolean conditions, occurrence counting.
 - **The stack, in one picture** — what TLIB is, and what it deliberately never knows.
 :::
@@ -51,7 +52,7 @@ stops being true breaks a test instead of quietly becoming fiction.
 
 Cross-references are written **§n**, counting the concepts in the order they
 appear: §1 is *Signatures and algebras*, §2 *Hash-consing and maximal sharing*,
-and so on to §12, *The stack, in one picture*. This section is not one of them.
+and so on to §13, *The stack, in one picture*. This section is not one of them.
 
 The concepts are ordered by dependency: each one is introduced before the
 sections that rest on it. The order is not a strict layering, though, and it
@@ -1518,11 +1519,12 @@ defining a pass by what it computes at each construct rather than by how it
 walks, is Donald Knuth's *Semantics of Context-Free Languages* (Mathematical
 Systems Theory 2(2), 1968) — attribute grammars. A property in the sense of
 this section is a **synthesized attribute**: a value computed from a node's
-children and stored at the node. The inherited attributes of the same paper are
-the case TLIB deliberately does not support, because a value flowing *down*
-from a parent is not a function of the subtree alone, and so is exactly what
-must not be memoised on it — see the invariant above. `property2` is the
-pragmatic answer for the commonest such case.
+children and stored at the node. The **inherited** attributes of the same paper
+are the other half, and they are exactly what must *not* be stored this way — a
+value flowing down from a parent is not a function of the subtree, so it has no
+business being keyed by the subtree. `property2` is the pragmatic answer when
+the context is a single extra tree; §11 is the general one, and it returns its
+results in an explicit map for precisely the reason this section gives.
 
 The storage mechanism is older still and was met in §3: the property lists that
 McCarthy's 1960 Lisp attached to atomic symbols. `setProperty`/`getProperty` is
@@ -3061,6 +3063,208 @@ trade a compiler that must be deterministic (§2) has good reason to make.
 
 ---
 
+## Descending attributes
+
+### The idea
+
+Everything so far computes **upward**. A fold takes the children's values and
+combines them (§1), a property caches the result on the node (§5), a fixed
+point extends that to recursion (§10). All of it rests on one fact: a
+synthesized attribute is a function of the subtree, so hash-consing hands it to
+you once per distinct subterm and never asks where the subterm sits.
+
+Now ask a different question about the same tree: **how many times does this
+subterm occur?** That is not a function of the subterm. A node knows nothing
+about how often it is used — the answer lives entirely in its *context*. And on
+a shared graph a node has several contexts at once, so the question does not
+even have one answer until you say how the answers combine.
+
+This asymmetry is the whole chapter. Sharing, which made the upward direction
+cheap, makes the downward direction *ambiguous*: the very node that is one
+object because it appears in three places must now receive three pieces of
+information and reconcile them.
+
+A descending attribute therefore needs three ingredients the upward direction
+never had to ask for:
+
+- a **contribution** — what a parent passes to its $i$-th child, given the
+  parent's own attribute;
+- a **join** — how the pieces arriving from several parents combine: sum for
+  occurrence counts, minimum for depth, a lattice join for clock environments,
+  disjunction for conditions;
+- an **order** — parents before children, with a node's join **complete before
+  it descends**. Miss this and a node passes on a value it has not finished
+  receiving, which is the bug every hand-written descending pass eventually
+  writes once.
+
+### Its role in TLIB
+
+It closes a gap this tour has been carrying since §5, and closes it in the way
+§5 prescribes rather than in the way that would have been convenient.
+
+Before, clients wrote descending passes by hand — occurrence markup, clock
+environment inference, condition annotation — and each one re-derived the same
+four decisions: contribution, join, parents-first ordering, cycle policy. Three
+implementations of one mechanism, with three chances to get the ordering
+invariant wrong.
+
+The part worth noticing is where the result goes. It is returned as an
+**explicit map**, not written into tree properties, and that is a deliberate
+reversal of §5's usual advice. §5's invariant says a property may hold only
+what is a function of the node. A descending attribute is precisely not that,
+so keying it by node would be the error §5 warns against — and concretely, two
+computations with different seeds or joins would collide on the same key. The
+chapter that introduced properties is also the one that forbids using them
+here.
+
+### More precisely
+
+Knuth's two directions, side by side. A **synthesized** attribute is determined
+by the node's children, an **inherited** one by its parent:
+
+```math
+a(n) = f\big(a(c_1),…,a(c_k)\big)
+\qquad\text{versus}\qquad
+a(c_i) = g\big(a(n), i\big)
+```
+
+On a *tree* the second is as unproblematic as the first: one parent, one value.
+On a **DAG** it stops being a definition, because a node with several parents
+receives several values. What TLIB computes is the solution of the system
+
+```math
+a(\mathrm{root}) = \mathrm{seed}
+\qquad
+a(n) = \bigsqcup_{(p,\,i)\ ∈\ \mathrm{parents}(n)} \mathrm{contrib}(p, i, a(p))
+```
+
+— every node's attribute is the join of the contributions of all the edges
+arriving at it. On an acyclic graph this has a unique solution and one
+topological pass computes it, which is why the ordering is part of the
+specification rather than an implementation detail.
+
+Occurrence counting is the instance where $\mathrm{contrib}$ is the identity
+and $\bigsqcup$ is $+$. Then $a(n)$ counts the paths from the root to $n$ —
+which is exactly the number of times $n$ occurs in the *unfolded* term, the
+quantity §12's `occur` computes by a dedicated traversal.
+
+Cycles are where it gets interesting, and where the honest answer is not the
+elegant one. A symbolic recursive term (§8) has back edges, so the system above
+is genuinely recursive and calls for §10's machinery. But §10 needs a lattice
+with a termination argument, and the joins wanted here often supply neither:
+with $\bigsqcup = +$ on a cyclic graph the least solution is **infinite**,
+since a node inside a recursion really does occur unboundedly often in the
+unfolding. So the implementation does something weaker and says so: back edges
+are cut, and their contributions replayed for a bounded number of extra rounds,
+each round feeding the previous round's values into them. That is a *truncated*
+Kleene ascent — an under-approximation whose depth the caller chooses, with
+zero rounds meaning "cut the cycles entirely".
+
+### In the code
+
+[descend.hh](tlib/descend.hh) is one function of about a hundred lines:
+
+```cpp
+template <typename A>
+std::map<Tree, A, treeorder> descendAttribute(
+    Tree root, const A& seed,
+    std::function<A(Tree, int, const A&)> contrib,
+    std::function<A(const A&, const A&)>  join,
+    int                                   recRounds = 0);
+```
+
+The signature is the specification: seed, contribution, join, and how many
+rounds to spend on back edges. The `treeorder` of the result map is §2's
+determinism requirement — an ordered container of trees must name its
+comparator.
+
+**Phase one** ([descend.hh:54-91](tlib/descend.hh#L54-L91)) is an iterative
+depth-first exploration that classifies the edges. A three-state marking —
+unseen, on the stack, done — identifies a **back edge** as one whose target is
+currently on the exploration stack, and those are excluded from the parent
+counts. Everything else is a forward edge and increments `fwdParents[child]`.
+
+**Phase two** ([descend.hh:93-146](tlib/descend.hh#L93-L146)) is a Kahn
+descent, and the ordering invariant is mechanical rather than hoped for:
+
+```cpp
+inject(c, contrib(n, b, an));
+if (--pending[c] == 0) {
+    ready.push_back(c);
+}
+```
+
+`pending[c]` counts the forward parents that still owe `c` a contribution. A
+node becomes ready **only when that count reaches zero** — which is exactly
+"the join is complete before the node descends", enforced by a counter instead
+of by a comment. The rounds loop wraps this, with each round starting from an
+empty table and back-edge contributions read from the previous round's results
+([descend.hh:107-117](tlib/descend.hh#L107-L117)).
+
+The conformance test is `checkDescend` in [tests.cpp:1489](tests.cpp#L1489),
+and its three cases are chosen to pin the three claims above: on the shared DAG
+`R(S(x, x), x)` the path count agrees with `Occur` — three occurrences of `x`,
+one of `S` — a *minimum* join computes depth and shows the mechanism does not
+assume additivity, and a symbolic recursive term terminates with a total that
+grows monotonically as rounds are added.
+
+*Code references verified at `3b8c1a9`.*
+
+### Invariants and non-goals
+
+**A descending attribute is not a property, and must not become one.** It is a
+function of the context, not of the node, so §5's rule excludes it from the
+node's property list. Two computations with different seeds or joins would
+otherwise overwrite each other under one key.
+
+**The join must be associative and commutative.** Contributions from several
+parents arrive in an unspecified order and are folded as they come, so anything
+order-sensitive gives an unspecified answer. Nothing checks this; sum, minimum
+and lattice joins all qualify.
+
+**With cycles the result is an under-approximation, by construction.** Bounded
+rounds are a truncation, not a fixed point, and the caller picks the depth.
+This is not a shortcut waiting to be replaced by §10 — for a join like $+$ the
+true least solution over a cyclic graph is infinite, so a truncation is the
+only finite answer there is. A domain that *does* form a lattice with a
+termination argument is a candidate for the §10 treatment; the two mechanisms
+are complementary, not rival.
+
+**Only nodes reachable from the root appear in the result.** The map is not a
+total function on the session's trees, and `at()` on an unreached node throws.
+
+**The descent follows branches only.** As everywhere else (§8), a recursive
+definition hangs off its node as a property and is not a branch, so a
+descending attribute crosses a recursion only in the symbolic form, where the
+cycle is visible in the graph the exploration walks.
+
+**Cost is proportional to edges, per round.** Each round is one exploration and
+one descent, so `recRounds` multiplies the work linearly — which is the other
+reason it is bounded and explicit.
+
+### Origins
+
+This is the half of Knuth's 1968 paper that §5 set aside. *Semantics of
+Context-Free Languages* introduces attribute grammars with **both** directions,
+synthesized and inherited, and observes that real language definitions need
+them together — a type flows up from an expression while a scope flows down
+into it. The tour has been using one of the two for ten sections; this is the
+other.
+
+The algorithm is a forward dataflow analysis over a DAG, and the
+parents-before-children order with its readiness counters is Kahn's topological
+sort (*Topological sorting of large networks*, CACM 5(11), 1962) — the counter
+`pending` is Kahn's in-degree, and the fact that a node is emitted only when it
+reaches zero is what carries the ordering invariant.
+
+The instance that motivated the whole thing takes us back to §2's origins:
+counting occurrences to decide what deserves a name is the code generator's
+side of common-subexpression elimination, the question Ershov's 1958 hash table
+was built to answer from the other end. One mechanism finds that a subterm is
+shared; this one asks how much.
+
+---
+
 ## Optional modules
 
 ### The idea
@@ -3083,7 +3287,9 @@ set operation rather than a proof search.
 That is the natural question to ask of a DAG before generating code: a subterm
 used once can be inlined, a subterm used many times deserves a name and a
 temporary variable. The counting is a traversal that increments a property per
-node.
+node. It predates §11 and is the special case of it where the contribution is
+the identity and the join is addition — `checkDescend` pins the two against
+each other.
 
 ### Its role in TLIB
 
@@ -3224,7 +3430,7 @@ what makes counting its uses meaningful.
 
 ## The stack, in one picture
 
-Twelve sections is a lot of detail to hold at once. Here is the whole library
+Thirteen sections is a lot of detail to hold at once. Here is the whole library
 in one diagram, read bottom-up — each layer using only what is below it:
 
 ```mermaid
@@ -3239,6 +3445,7 @@ flowchart BT
     R["§8 recursive terms<br/><i>finite syntax, infinite meaning</i>"]
     W["§9 rewriting"]
     F["§10 fixed points"]
+    D2["§11 descending attributes<br/><i>what a node inherits from its contexts</i>"]
     C["client algebras<br/><i>types, intervals, code generation</i>"]
 
     G --> S --> N --> T
@@ -3251,9 +3458,12 @@ flowchart BT
     R --> F
     P --> W
     P --> F
+    T --> D2
+    R --> D2
     O --> C
     W --> C
     F --> C
+    D2 --> C
     L --> C
 ```
 
@@ -3263,9 +3473,12 @@ on interned symbols; and all of it rests on a memory model that never recycles
 an address. Properties depend on trees and enable everything above them.
 Recursive terms need both trees and properties, because §8's cycle goes through
 the property graph. Rewriting and fixed points are the two ways of computing
-over recursion, and the client's algebras sit on top, which is where TLIB stops.
+*over* recursion, and descending attributes are the one direction that reads
+the graph rather than the terms — the only chapter whose answer depends on
+where a node sits rather than on what it is. The client's algebras sit on top,
+which is where TLIB stops.
 
-### The argument in twelve sentences
+### The argument in thirteen sentences
 
 | § | The one thing to remember |
 | :--- | :--- |
@@ -3279,8 +3492,9 @@ over recursion, and the client's algebras sit on top, which is where TLIB stops.
 | 8 | Recursion is a finite term denoting an infinite tree, with the cycle in the properties, never in the branches. |
 | 9 | Rewriting is a fold into the syntax algebra, memoised for sharing and renaming for immutability. |
 | 10 | Attributes over recursion are computed by iteration in a lattice, with widening for termination. |
-| 11 | The optional modules add nothing to the core, which is the point. |
-| 12 | Everything above is machinery; the meaning lives in the client's algebras. |
+| 11 | What a node inherits is a function of its contexts, so sharing makes it a question rather than a lookup. |
+| 12 | The optional modules add nothing to the core, which is the point. |
+| 13 | Everything above is machinery; the meaning lives in the client's algebras. |
 
 ### What TLIB deliberately never knows
 
