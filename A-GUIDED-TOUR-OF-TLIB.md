@@ -3178,13 +3178,13 @@ rounds to spend on back edges. The `treeorder` of the result map is §2's
 determinism requirement — an ordered container of trees must name its
 comparator.
 
-**Phase one** ([descend.hh:54-91](tlib/descend.hh#L54-L91)) is an iterative
+**Phase one** ([descend.hh:62-99](tlib/descend.hh#L62-L99)) is an iterative
 depth-first exploration that classifies the edges. A three-state marking —
 unseen, on the stack, done — identifies a **back edge** as one whose target is
 currently on the exploration stack, and those are excluded from the parent
 counts. Everything else is a forward edge and increments `fwdParents[child]`.
 
-**Phase two** ([descend.hh:93-146](tlib/descend.hh#L93-L146)) is a Kahn
+**Phase two** ([descend.hh:101-154](tlib/descend.hh#L101-L154)) is a Kahn
 descent, and the ordering invariant is mechanical rather than hoped for:
 
 ```cpp
@@ -3199,7 +3199,7 @@ node becomes ready **only when that count reaches zero** — which is exactly
 "the join is complete before the node descends", enforced by a counter instead
 of by a comment. The rounds loop wraps this, with each round starting from an
 empty table and back-edge contributions read from the previous round's results
-([descend.hh:107-117](tlib/descend.hh#L107-L117)).
+([descend.hh:115-125](tlib/descend.hh#L115-L125)).
 
 The conformance test is `checkDescend` in [tests.cpp:1489](tests.cpp#L1489),
 and its three cases are chosen to pin the three claims above: on the shared DAG
@@ -3208,7 +3208,7 @@ one of `S` — a *minimum* join computes depth and shows the mechanism does not
 assume additivity, and a symbolic recursive term terminates with a total that
 grows monotonically as rounds are added.
 
-*Code references verified at `3b8c1a9`.*
+*Code references verified at `7a9459c`.*
 
 ### Invariants and non-goals
 
@@ -3219,8 +3219,9 @@ otherwise overwrite each other under one key.
 
 **The join must be associative and commutative.** Contributions from several
 parents arrive in an unspecified order and are folded as they come, so anything
-order-sensitive gives an unspecified answer. Nothing checks this; sum, minimum
-and lattice joins all qualify.
+order-sensitive gives an unspecified answer. Sum, minimum and lattice joins all
+qualify. Nothing checks it — the requirement is stated in the header
+([descend.hh:20-22](tlib/descend.hh#L20-L22)) and nowhere enforced.
 
 **With cycles the result is an under-approximation, by construction.** Bounded
 rounds are a truncation, not a fixed point, and the caller picks the depth.
