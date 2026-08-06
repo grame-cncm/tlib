@@ -1,4 +1,9 @@
-# A guided tour of TLIB
+---
+document-style: rapport-2
+title: A guided tour of TLIB
+---
+
+# Introduction
 
 TLIB is the tree library at the heart of the [Faust](https://faust.grame.fr)
 compiler. This document explains what it is made of, in the order in which its
@@ -67,11 +72,10 @@ an argument depends on what such a box defers, so a reader can take the
 thumbnail and move on, or jump ahead to resolve the term first. Footnotes are
 reserved for genuine asides — an etymology, a citation.
 
----
 
-## Signatures and algebras
+# Signatures and algebras
 
-### The idea
+## The idea
 
 Take an ordinary compiler task. You have an expression language with four
 operations — add, subtract, multiply, divide — and numbers as leaves. In C++
@@ -132,7 +136,7 @@ is written. A leaf is a tree with no children; `Add(x, y)` is a tree whose node
 is the symbol `Add` and whose two children are `x` and `y`. Developed in §3.
 :::
 
-### Its role in TLIB
+## Its role in TLIB
 
 This is the organising principle of the library, and it is worth being explicit
 about where the boundary falls.
@@ -196,7 +200,7 @@ If you keep one sentence from this section: **TLIB is a high-performance
 carrier for syntax algebras, and everything else in it exists to make folds
 over those algebras correct and fast.**
 
-### More precisely
+## More precisely
 
 A **signature** $Σ$ is a finite set of constructor symbols, each with an arity
 in $ℕ$.
@@ -253,7 +257,7 @@ Both consequences are stated for *finite* terms. Recursive terms need a fixed
 point semantics, which the signature alone does not determine; §8 and §10
 return to this.
 
-### In the code
+## In the code
 
 The two assertions to look for in the executable example are these, from
 `checkArithmeticSignatureFold()` in [tests.cpp:255](tests.cpp#L255):
@@ -333,7 +337,7 @@ symbol, that the symbol belongs to *this* algebra's signature, and that its
 arity is the expected one. TLIB trees are not intrinsically well-typed terms of
 a signature — see below.
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **TLIB does not enforce arity.** The `Signature` class records which symbols
 are constructors of which language; it does not record how many arguments each
@@ -378,7 +382,7 @@ way. What signatures make disjoint is the *opcode space*, not the *name space*.
 
 *Code references verified at `9432d5c`.*
 
-### Origins
+## Origins
 
 The framework is that of **universal algebra**, whose modern form dates from
 Garrett Birkhoff's *On the structure of abstract algebras* (1935): study
@@ -399,11 +403,11 @@ consume an inductive structure, is Meijer, Fokkinga and Paterson (1991), cited
 in the footnote above. A reader who wants only one paper should take the ADJ
 one for the *why* and the *bananas* one for the *how*.
 
----
 
-## Hash-consing and maximal sharing
 
-### The idea
+# Hash-consing and maximal sharing
+
+## The idea
 
 You already know this trick in its simplest form. In a compiler, you do not
 store identifiers as strings scattered through the AST; you intern them in a
@@ -459,7 +463,7 @@ node's content is fixed at construction, forever. Everything mutable has to
 move elsewhere — which is why annotations live in property lists (§5) rather
 than in fields.
 
-### Its role in TLIB
+## Its role in TLIB
 
 §1 said the fold demands that the interpretation of a term depend only on the
 term. Hash-consing is what turns that demand into a mechanical fact rather than
@@ -503,7 +507,7 @@ its billion operations — the sharing is invisible to a traversal that does not
 look for it. Hash-consing makes memoisation possible and cheap; it does not
 perform it. §5 is where the exponent actually disappears.
 
-### More precisely
+## More precisely
 
 Let $T_Σ$ be the term algebra of §1. Hash-consing implements a function
 $⌜·⌝ : T_Σ → \mathrm{Addr}$ from terms to machine addresses which is
@@ -540,7 +544,7 @@ neutral elements, arithmetic identities — is a different relation, and if a
 client wants terms to be shared modulo that relation, it must build a canonical
 form and let structural sharing apply to *it*.
 
-### In the code
+## In the code
 
 The whole mechanism is `CTree::make` in
 [tree.cpp:319](tlib/tree.cpp#L319):
@@ -659,7 +663,7 @@ lazily rather than being an inline member; and most insertions land on an empty
 bucket, which is why the load-factor check runs only when the bucket was
 already occupied ([tree.cpp:335](tlib/tree.cpp#L335)).
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **Structural equality is pointer equality — in both directions.** For any two
 live trees, `p == q` if and only if they have the same node and the same
@@ -711,7 +715,7 @@ compiler.
 
 *Code references verified at `9432d5c`.*
 
-### Origins
+## Origins
 
 The technique is older than it looks. A. P. Ershov, *On programming of
 arithmetic operations* (CACM 1(8), 1958), used a hash table to recognise
@@ -737,11 +741,11 @@ short, practical reference: the same design questions TLIB answers — the table
 the collisions, the memory model, the interaction with memoisation — worked
 through in a different language.
 
----
 
-## Nodes and symbols
 
-### The idea
+# Nodes and symbols
+
+## The idea
 
 A TLIB tree is a **node** plus a list of child trees, and nothing else:
 
@@ -789,7 +793,7 @@ children is a perfectly good leaf too. The distinction that matters to a fold �
 which symbols are constructors of *my* language — is the business of signatures
 (§7), not of nodes.
 
-### Its role in TLIB
+## Its role in TLIB
 
 Three things rest on this section.
 
@@ -830,7 +834,7 @@ able to name it without capturing a name the user chose. TLIB uses it for the
 fresh variables introduced by rewriting (§9) and — less obviously — to give
 every `property` object a private key (§5).
 :::
-### More precisely
+## More precisely
 
 Write $\mathrm{Sym}$ for the set of interned symbols. The set of nodes is a
 disjoint sum, with decidable equality:
@@ -894,7 +898,7 @@ on — two symbols differ exactly when their names differ — and it is what mak
 The first equation holds for names already in normal form; TLIB normalises
 control characters on the way in, as the invariants below record.
 
-### In the code
+## In the code
 
 `Node` is at [node.hh:77](tlib/node.hh#L77), and it is exactly the tagged union
 described above:
@@ -971,7 +975,7 @@ hashed ([symbol.cpp:136-138](tlib/symbol.cpp#L136-L138)). Names are normalised, 
 `symbol("a\nb")` and `symbol("a b")` are the *same* symbol
 ([tour-examples.cpp:132](tour-examples.cpp#L132)).
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **One symbol per name, for the whole session.** $p ≠ q$ if and only if the
 names differ. Symbol pointers are stable for the session and are never freed
@@ -1012,7 +1016,7 @@ payload exists precisely so that this is rarely necessary.
 
 *Code references verified at `9432d5c`.*
 
-### Origins
+## Origins
 
 The shape of the data is John McCarthy's, in the paper that started the field:
 *Recursive Functions of Symbolic Expressions and Their Computation by Machine,
@@ -1035,11 +1039,11 @@ For the table itself, the reference is Knuth's *The Art of Computer
 Programming*, volume 3, §6.4 — separate chaining, load factors and rehashing
 are exactly what `Symbol::get` and `CTree::make` implement.
 
----
 
-## The session memory model
 
-### The idea
+# The session memory model
+
+## The idea
 
 Ask the obvious question about §2 and you get an uncomfortable answer. A tree
 is reachable from every parent that contains it, from the construction table
@@ -1081,7 +1085,7 @@ earlier would then compare equal to a tree it has nothing to do with, and
 session model is what makes that impossible: within a session, an address is
 handed out once and means the same term forever.
 
-### Its role in TLIB
+## Its role in TLIB
 
 The memory model is not a service TLIB offers on the side; it is the condition
 under which the previous two sections are true at all.
@@ -1106,7 +1110,7 @@ session's. A batch compiler never notices. A hosted compiler — `libfaust`
 compiling one program after another — must call `cleanup()` between them, and
 must not keep a `Tree` across the boundary.
 
-### More precisely
+## More precisely
 
 This is **region-based memory management** in its simplest form: lifetime is a
 property of a *region*, not of an object. Allocation puts an object in the
@@ -1136,7 +1140,7 @@ model is therefore sound exactly when sessions are bounded — which is the case
 for a compilation, and is not the case for a long-running interactive process
 that never calls `cleanup()`.
 
-### In the code
+## In the code
 
 Everything hangs on one base class, [garbageable.hh:41](tlib/garbageable.hh#L41):
 
@@ -1217,7 +1221,7 @@ a node's property map, and `Symbol` holds a `std::string`. For a process that
 runs one session and exits this is invisible; for a host that compiles one
 program after another it is a cumulative leak.
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **Every `Tree` and every `Sym` is invalid after `cleanup()`.** They are
 borrowed pointers, not handles, and their lifetime is exactly the session's.
@@ -1257,7 +1261,7 @@ convenience, never as ownership.
 
 *Code references verified at `9432d5c`.*
 
-### Origins
+## Origins
 
 The technique is old and has been rediscovered under several names — arenas,
 regions, zones, pools. The classic engineering reference is David Hanson's
@@ -1279,11 +1283,11 @@ The pattern is also standard practice in compilers built since: LLVM's
 infrastructures rest on the same observation, that a compilation is a bounded
 batch process whose peak memory is bounded by its input.
 
----
 
-## Properties
 
-### The idea
+# Properties
+
+## The idea
 
 Everything so far has been building up to this one. §1 showed that a pass over
 a term is a fold. §2 made structurally equal terms be the same object. §4 made
@@ -1324,7 +1328,7 @@ by two unrelated passes therefore have different keys and cannot collide — wit
 no registry of property names, no enum to extend, and no coordination between
 passes that do not know about each other.
 
-### Its role in TLIB
+## Its role in TLIB
 
 This is the service the whole library exists to provide. Sections 1 to 4 each
 established one of its preconditions, and none of them is dispensable:
@@ -1346,7 +1350,7 @@ counting, code generation — and each is a fold whose results are properties.
 Properties are also how passes communicate: one pass annotates, a later pass
 reads. The tree is the blackboard.
 
-### More precisely
+## More precisely
 
 A property is a **partial function** $Tree ⇀ P$, represented not as one table
 but distributed: the graph of the function is scattered across the nodes it is
@@ -1382,7 +1386,7 @@ hash-consed term:
 — the cost becomes the size of the DAG rather than the size of the term it
 denotes, and §2 showed the gap between the two is unbounded.
 
-### In the code
+## In the code
 
 The mechanism on the node is four short methods on `CTree`
 ([tree.hh:296-325](tlib/tree.hh#L296-L325)):
@@ -1471,7 +1475,7 @@ between runs — exactly the non-determinism §2 warned about. The code notes wh
 it is harmless here: the map is only ever point-queried by $(a, b)$ and never
 iterated, so its order cannot leak into generated output.
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **A memoised value must be a function of the tree alone.** The library cannot
 check this, and violating it produces wrong results rather than crashes — the
@@ -1512,7 +1516,7 @@ shared nodes, and §4's single-thread rule covers them.
 
 *Code references verified at `9432d5c`.*
 
-### Origins
+## Origins
 
 The idea of hanging computed facts on the nodes of a syntax tree, and of
 defining a pass by what it computes at each construct rather than by how it
@@ -1535,11 +1539,11 @@ cited in §1 — and it is worth noticing that Knuth's attribute grammars and
 Michie's memo functions appeared in the same year, independently, as two views
 of one idea: compute a value from a structure, once, and keep it.
 
----
 
-## Lists, sets and environments
 
-### The idea
+# Lists, sets and environments
+
+## The idea
 
 A compiler needs more than trees. It needs lists of arguments, sets of free
 variables, environments mapping names to values. The reflex is to reach for
@@ -1588,7 +1592,7 @@ a binding does not modify the environment; it builds a new one that shares the
 old as its tail. Lexical scoping and shadowing fall out of list structure, and
 an inner scope costs one node.
 
-### Its role in TLIB
+## Its role in TLIB
 
 This chapter is the demonstration that §1's claim of a *universal carrier* was
 not rhetorical. The one tree type absorbs the auxiliary data structures of a
@@ -1607,7 +1611,7 @@ The price is stated plainly in the non-goals: these are *functional* structures
 with functional costs. `nth` is linear, `addElement` is linear, and a list used
 where an array is wanted will disappoint.
 
-### More precisely
+## More precisely
 
 Lists extend the signature of §1 with two constructors:
 
@@ -1659,7 +1663,7 @@ v & \text{if } k = k' \\
 ever removed or modified, only covered
 ([tour-examples.cpp:184](tour-examples.cpp#L184)).
 
-### In the code
+## In the code
 
 Everything is in [list.hh](tlib/list.hh) and [list.cpp](tlib/list.cpp), and the
 constructors are as small as promised
@@ -1720,7 +1724,7 @@ carrying tens of thousands of properties that §5 mentioned.
 
 *Code references verified at `9432d5c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **A list is a term, with all that follows.** Equal lists are one pointer,
 lists can be property keys and set elements, and nothing can mutate one. There
@@ -1752,7 +1756,7 @@ remove it, so a deeply nested scope keeps every outer binding reachable and
 alive. That is what makes environments cheap to copy and share; it also means
 they only shrink by being discarded.
 
-### Origins
+## Origins
 
 This is Lisp again, and deliberately: the `cons`/`nil` pair, the shared tails,
 the association list used as an environment are all in McCarthy's 1960 paper
@@ -1774,11 +1778,11 @@ matters here is Filliâtre and Conchon's (§2): once the representation is
 canonical *and* hash-consed, structural equality of the underlying values comes
 for free, and set equality collapses to a pointer comparison.
 
----
 
-## Signatures and opcodes
 
-### The idea
+# Signatures and opcodes
+
+## The idea
 
 §1 wrote a fold and waved at one line of it:
 
@@ -1834,7 +1838,7 @@ of trees and adding a field to `CTree` costs megabytes. They live on the
 home for anything true of a name. Every tree using that constructor reaches its
 identity through the node it already holds, at no per-tree cost.
 
-### Its role in TLIB
+## Its role in TLIB
 
 This is the mechanism that makes §1's architecture affordable rather than
 merely elegant.
@@ -1856,7 +1860,7 @@ constructors are grouped and numbered. It does not know what they mean, how
 many arguments they take, or which language is which — those stay in the
 client, as §1's non-goals promised.
 
-### More precisely
+## More precisely
 
 A signature $S$ reserves an aligned range of $k = 256$ global opcodes:
 
@@ -1900,7 +1904,7 @@ the sense of §1 is therefore only half-represented — the vocabulary without t
 arities. The arities live in the client's algebra interface, where the C++ type
 system checks them, and are verified per occurrence by the fold.
 
-### In the code
+## In the code
 
 The public API is four declarations in
 [symbol.hh:56-83](tlib/symbol.hh#L56-L83) and
@@ -1966,7 +1970,7 @@ mechanism, fold included, is `checkArithmeticSignatureFold()` in
 
 *Code references verified at `9432d5c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **A symbol belongs to at most one signature, permanently.** The association and
 the opcode are written once and never change for the rest of the session.
@@ -2000,7 +2004,7 @@ a program that declares its languages in a different order gets different
 global opcodes. Nothing should be persisted that depends on their numeric
 values — only on their density and disjointness.
 
-### Origins
+## Origins
 
 The technique is the oldest one in language implementation: replace a name by a
 small integer and dispatch through a table. It is what a bytecode interpreter
@@ -2021,11 +2025,11 @@ observation that interning creates a natural home for anything true of a name,
 applied once more, and the reason a constructor's identity costs nothing per
 tree.
 
----
 
-## Recursive terms
 
-### The idea
+# Recursive terms
+
+## The idea
 
 Every Faust program has feedback in it. A one-pole filter, a delay line, a
 reverb: the output of a signal depends on its own past. Written as an equation
@@ -2092,7 +2096,7 @@ terminates naturally at a recursive node and simply does not see the loop; a
 traversal that wants to enter the recursion asks for the property explicitly.
 Recursion became visible only where it is wanted.
 
-### Its role in TLIB
+## Its role in TLIB
 
 Recursion is what the library is ultimately for. A Faust program is a system of
 mutually recursive signal equations, and every later stage — typing, interval
@@ -2122,7 +2126,7 @@ node can depend on itself. That is not a gap in this chapter, it is the
 statement of the next two — §9 for transforming such terms, §10 for computing
 attributes over them.
 
-### More precisely
+## More precisely
 
 A recursive term denotes an infinite tree. Not an arbitrary one: an infinite
 tree with **finitely many distinct subtrees**, which is called a *rational* or
@@ -2183,7 +2187,7 @@ collide would receive the same variable name. That is not a silent corruption �
 the second group would attempt to define an already-defined variable with a
 different body, which the protocol below makes a fatal error.
 
-### In the code
+## In the code
 
 Everything lives in [recursive-tree.cpp](tlib/recursive-tree.cpp), with the API
 in [tree.hh:415-490](tlib/tree.hh#L415-L490).
@@ -2275,7 +2279,7 @@ is the function to call.
 
 *Code references verified at `9432d5c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **A recursive definition is immutable once given.** Redefining a symbolic
 variable with a different body, or erasing its definition, is fatal. This is
@@ -2312,7 +2316,7 @@ syntax; the semantics of the fixed point — least, greatest, or an iteration
 that must be made to converge — is the client's, and §10 is the machinery for
 computing it.
 
-### Origins
+## Origins
 
 The nameless representation is Nicolaas Govert de Bruijn's, in *Lambda calculus
 notation with nameless dummies, a tool for automatic formula manipulation, with
@@ -2339,11 +2343,11 @@ find the mutually recursive groups. That a 1972 graph algorithm and a 1972
 notation for binders meet inside one function is a fair summary of what this
 chapter is: recursion is a graph problem wearing the clothes of syntax.
 
----
 
-## Rewriting
 
-### The idea
+# Rewriting
+
+## The idea
 
 A fold (§1) turns a term into a value of some other domain. Very often what a
 compiler wants instead is a term into *another term*: constant folding,
@@ -2387,7 +2391,7 @@ correct discipline is to allocate a **fresh variable** for every recursive
 definition traversed — which means that rewriting with the identity rule
 returns a term that is alpha-equivalent to its input, not equal to it.
 
-### Its role in TLIB
+## Its role in TLIB
 
 Rewriting is the *write* half of the library, where the previous chapters were
 mostly about reading. Most structural transformations a Faust compilation
@@ -2411,7 +2415,7 @@ rewrite, and anything the rewrite invalidates must be recomputed after it. The
 specification states the rule as **rewrite, then re-annotate** — including the
 fixed points of §10, which have to be re-run on the result.
 
-### More precisely
+## More precisely
 
 The basic traversal is the **congruence closure** of a local rule: rewrite the
 children, rebuild, apply the rule once to the rebuilt node. Written as an
@@ -2631,7 +2635,7 @@ never visited; otherwise the ordinary congruence applies. The priority of the
 guard over the descent is *part of the semantics*, not an optimisation: without
 it the rewrite is lost, not merely delayed.
 
-### In the code
+## In the code
 
 [rewrite.hh](tlib/rewrite.hh) is a header-only file whose comments are, unusually,
 a specification — the inference rules above are transcribed from it. The core is
@@ -2692,7 +2696,7 @@ specification of both is [REWRITE-SPEC.md](REWRITE-SPEC.md).
 
 *Code references verified at `9432d5c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **Rewriting a recursive term renames it.** Under the identity rule the result
 is alpha-equivalent to the input, not pointer-equal — `areEquiv`, not `==`.
@@ -2755,7 +2759,7 @@ traversal always terminates, even on cyclic terms, because of the memo. A rule
 that rewrites a node into something containing a fresh redex can still diverge
 if the caller iterates it.
 
-### Origins
+## Origins
 
 The framework is **term rewriting**, whose standard reference is Franz Baader
 and Tobias Nipkow's *Term Rewriting and All That* (Cambridge University Press,
@@ -2780,11 +2784,11 @@ well-known awkwardness of type-directed transformations. The library's answer,
 that priority is part of the semantics rather than a scheduling choice, is
 stated in the specification rather than left to be discovered.
 
----
 
-## Fixed points
 
-### The idea
+# Fixed points
+
+## The idea
 
 §1 promised that every analysis is a fold. §8 broke the promise: a recursive
 term has no base case, and the value of a node can depend on its own value.
@@ -2833,7 +2837,7 @@ are solved in dependency order, so by the time a group is iterated, everything
 it depends on is already settled — and only genuinely mutual recursion pays the
 cost of iteration.
 
-### Its role in TLIB
+## Its role in TLIB
 
 This is where TLIB stops being a data structure library and becomes a compiler
 substrate. Faust's type inference, its interval analysis, its vectorisability
@@ -2853,7 +2857,7 @@ So a new analysis over recursive terms costs one class implementing
 algebra in §1. That is the chapter's real content: the fold survives recursion,
 at the price of a lattice and an iteration strategy.
 
-### More precisely
+## More precisely
 
 Let $V$ be the attribute domain, ordered by $⊑$ — read $x ⊑ y$ as "$x$ is at
 least as precise as $y$", with $⊥$ the least element and $⊤$ the greatest. A
@@ -2919,7 +2923,7 @@ every branch against that frozen snapshot, then swap. Updating in place
 the order the variables happen to be visited in; freezing makes each round a
 function of the previous round alone.
 
-### In the code
+## In the code
 
 [fixpoint.hh](tlib/fixpoint.hh) is header-only and organised around two
 interfaces the client implements or receives.
@@ -2994,7 +2998,7 @@ session, so repeated analyses of the same term share one Tarjan run.
 
 *Code references verified at `9432d5c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **The iterator computes a post-fixed point, not necessarily the least one.**
 With widening it is deliberately not the least. Soundness means the answer
@@ -3037,7 +3041,7 @@ Bruijn one.
 made of new nodes, so its attributes must be recomputed — including re-running
 this fixed point.
 
-### Origins
+## Origins
 
 The ascending regime is **Kleene iteration**, from the fixed-point theorem of
 Knaster and Tarski — Alfred Tarski's *A lattice-theoretical fixpoint theorem and
@@ -3061,11 +3065,11 @@ is what keeps iteration confined to genuinely mutual recursion. The choice of a
 Jacobi rather than Gauss-Seidel update trades speed for order-independence, a
 trade a compiler that must be deterministic (§2) has good reason to make.
 
----
 
-## Descending attributes
 
-### The idea
+# Descending attributes
+
+## The idea
 
 Everything so far computes **upward**. A fold takes the children's values and
 combines them (§1), a property caches the result on the node (§5), a fixed
@@ -3097,7 +3101,7 @@ never had to ask for:
   receiving, which is the bug every hand-written descending pass eventually
   writes once.
 
-### Its role in TLIB
+## Its role in TLIB
 
 It closes a gap this tour has been carrying since §5, and closes it in the way
 §5 prescribes rather than in the way that would have been convenient.
@@ -3117,7 +3121,7 @@ computations with different seeds or joins would collide on the same key. The
 chapter that introduced properties is also the one that forbids using them
 here.
 
-### More precisely
+## More precisely
 
 Knuth's two directions, side by side. A **synthesized** attribute is determined
 by the node's children, an **inherited** one by its parent:
@@ -3160,7 +3164,7 @@ each round feeding the previous round's values into them. That is a *truncated*
 Kleene ascent — an under-approximation whose depth the caller chooses, with
 zero rounds meaning "cut the cycles entirely".
 
-### In the code
+## In the code
 
 [descend.hh](tlib/descend.hh) is one function of about a hundred lines:
 
@@ -3210,7 +3214,7 @@ grows monotonically as rounds are added.
 
 *Code references verified at `7a9459c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **A descending attribute is not a property, and must not become one.** It is a
 function of the context, not of the node, so §5's rule excludes it from the
@@ -3243,7 +3247,7 @@ cycle is visible in the graph the exploration walks.
 one descent, so `recRounds` multiplies the work linearly — which is the other
 reason it is bounded and explicit.
 
-### Origins
+## Origins
 
 This is the half of Knuth's 1968 paper that §5 set aside. *Semantics of
 Context-Free Languages* introduces attribute grammars with **both** directions,
@@ -3264,11 +3268,11 @@ side of common-subexpression elimination, the question Ershov's 1958 hash table
 was built to answer from the other end. One mechanism finds that a subterm is
 shared; this one asks how much.
 
----
 
-## Optional modules
 
-### The idea
+# Optional modules
+
+## The idea
 
 Two small modules ship with TLIB and are used by Faust, but nothing in the core
 depends on them: remove either and the library still builds. They are worth a
@@ -3292,7 +3296,7 @@ node. It predates §11 and is the special case of it where the contribution is
 the identity and the join is addition — `checkDescend` pins the two against
 each other.
 
-### Its role in TLIB
+## Its role in TLIB
 
 Their role is deliberately marginal, and saying so is the point.
 
@@ -3314,7 +3318,7 @@ Neither module is on the path of any other chapter. They are here because a
 library that claims its core is sufficient should be able to point at things
 built on top of it without extending it.
 
-### More precisely
+## More precisely
 
 A DNF condition is a disjunction of conjunctions of atoms, stored as a set of
 sets:
@@ -3354,7 +3358,7 @@ root it is counted in:
 over the *unfolded term*, not over the DAG: a subterm shared by two parents
 occurs twice, which is exactly what a code generator needs to know.
 
-### In the code
+## In the code
 
 `dcond` is eight declarations ([dcond.hh:34-42](tlib/dcond.hh#L34-L42)):
 `dnfCond`, `dnfAnd`, `dnfOr`, `dnfLess` and the four `cnf` counterparts. The
@@ -3386,7 +3390,7 @@ with `unique`, and `countOccurrences`
 
 *Code references verified at `9432d5c`.*
 
-### Invariants and non-goals
+## Invariants and non-goals
 
 **Neither module is required.** Nothing in `tree`, `node`, `symbol`, `list`,
 `property`, `recursive-tree`, `rewrite` or `fixpoint` refers to them.
@@ -3414,7 +3418,7 @@ unless the caller has arranged otherwise.
 established that definitions live in properties, so occurrences inside a
 recursive body are not counted from outside it.
 
-### Origins
+## Origins
 
 Normal forms for boolean expressions are as old as the subject; the specific
 observation that matters here is the one §2's origins already made about BDDs —
@@ -3427,9 +3431,9 @@ elimination** seen from the code generator's side, and takes us back to Ershov
 (1958), cited in §2: the same hash table that finds a repeated subexpression is
 what makes counting its uses meaningful.
 
----
 
-## The stack, in one picture
+
+# The stack, in one picture
 
 Thirteen sections is a lot of detail to hold at once. Here is the whole library
 in one diagram, read bottom-up — each layer using only what is below it:
@@ -3479,7 +3483,7 @@ the graph rather than the terms — the only chapter whose answer depends on
 where a node sits rather than on what it is. The client's algebras sit on top,
 which is where TLIB stops.
 
-### The argument in thirteen sentences
+## The argument in thirteen sentences
 
 | § | The one thing to remember |
 | :--- | :--- |
@@ -3497,7 +3501,7 @@ which is where TLIB stops.
 | 12 | The optional modules add nothing to the core, which is the point. |
 | 13 | Everything above is machinery; the meaning lives in the client's algebras. |
 
-### What TLIB deliberately never knows
+## What TLIB deliberately never knows
 
 The boundary has been redrawn in almost every chapter, and it is the same line
 each time.
@@ -3518,7 +3522,7 @@ That division is the reason the library has survived two decades inside a
 compiler that has changed a great deal around it. The core says nothing about
 audio, so nothing about audio can obsolete it.
 
-### Where to go next
+## Where to go next
 
 - [README.md](README.md) — the API surface, layer by layer, and the build.
 - [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md) — §7 in full, with the conformance
