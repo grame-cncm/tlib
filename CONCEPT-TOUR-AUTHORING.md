@@ -295,6 +295,12 @@ both. Two shapes recur:
   `c1 == dnfOr(c1, c2)`, which says the opposite. Reading the body is
   not enough either, unless you stop to work out what the expression
   *means*.
+- *A comment survives a redesign of its own file.* The kind bits of a
+  node were opened to consumers through a registered callback, then
+  reworked the same day into data on a symbol; two lines of the header
+  still described the callback, six lines above a paragraph describing
+  the data. The file contradicted itself, and both halves had been
+  written in good faith within hours.
 
 Two habits catch both. **Search for the call sites** whenever a claim
 names a user, a frequency or a share — grep the whole dependency chain,
@@ -302,6 +308,14 @@ not the file you happen to be in. And **let the tests arbitrate
 semantics**: the code says what a function does, the test says what it
 is *for*. Where a test and a comment disagree, the test is the better
 witness, and the disagreement is a finding.
+
+**Look for them where the code is freshest.** Intuition says stale
+comments accumulate in old files. The four found while writing this
+repository's tour say the opposite: each sat beside a recent change, one
+of them the same day. A comment goes stale when someone corrects the
+code and does not re-read what surrounds it — so the highest-yield place
+to look is the neighbourhood of the last commit, not the oldest file.
+When reviewing a diff, read the **unchanged** lines around it.
 
 This axis is also the argument against writing a tour with only the
 library in view. The claims most likely to be wrong are the ones about
@@ -388,6 +402,17 @@ knowledge migrates into a document the maintainers do not open, which is
 how the stale comments this method keeps finding were created in the
 first place.
 
+**Rank the endings of a finding: documented < checked <
+unconstructible.** Correcting a faithful lie leaves the next one free to
+appear. Where the underlying fact can be checked mechanically, the
+lesson has a better ending than a sentence — an assertion, a test, an
+invariant checker. This project has one of each: `tour-examples.cpp`
+turns the tour's surprising claims into tests, and on the sources side a
+bug that only construction knowledge could refute was answered by a
+checker that makes the impossible state unrepresentable. Not every
+lesson can be made mechanical. The ones that can, should — and the prose
+then points at the check instead of carrying the weight alone.
+
 ---
 
 ## Checklist per concept
@@ -411,3 +436,5 @@ first place.
 - [ ] Invariants discovered while writing are also written at the code site
 - [ ] Concept stamped with the commit its code references were verified against
 - [ ] Findings routed to their owner, and closed only once every copy is fixed and tested
+- [ ] Comments near recently changed code re-read, not just the changed lines
+- [ ] Each finding taken as far up as it goes: documented, checked, or made unconstructible
