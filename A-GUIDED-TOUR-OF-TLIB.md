@@ -638,14 +638,18 @@ back to hashing the pointer ([node.hh:104](tlib/node.hh#L104)), so terms
 containing such nodes are outside the canonical guarantee — they are not meant
 to enter canonical orderings.
 
-**`fAperture` and `fContains`** ([tree.hh:187-188](tlib/tree.hh#L187-L188)) are
+**`fAperture` and `fContains`** ([tree.hh:197-198](tlib/tree.hh#L197-L198)) are
 synthesised attributes: small facts about the whole subterm — how many free de
-Bruijn levels it has, whether it contains a recursive node —
-computed once in the constructor and read in $O(1)$ ever after. They are the
-degenerate case
-of the memoisation idea: an attribute that is a function of the term, and that
-TLIB knows about intrinsically, can simply live in the node. Attributes TLIB
-does not know about need the general mechanism of §5.
+Bruijn levels it has, whether it contains a recursive node — computed once in
+the constructor and read in $O(1)$ ever after. They are the degenerate case of
+the memoisation idea: an attribute that is a function of the term can simply
+live in the node.
+
+Half of `fContains` is TLIB's own; the other half is reserved for whatever a
+client wants to propagate the same way, declared with its constructors and
+folded by the same union. §7 describes that arrangement, which is worth reading
+as the exception it is — the general answer for a client's attributes remains
+§5.
 
 ::: definition [de Bruijn representation, aperture]
 The **de Bruijn** representation removes the names of bound variables: a
@@ -713,7 +717,7 @@ no obvious owner to release it. The library does not attempt reclamation during
 a session at all — see §4 for what it does instead, and why that suits a
 compiler.
 
-*Code references verified at `9432d5c`.*
+*Code references verified at `9390a8c`.*
 
 ## Origins
 
@@ -1960,7 +1964,7 @@ Two field reads, inlined, on the hot path of every fold. Note the return value:
 an *unsigned* symbol is not an error, it is simply not a constructor of any
 language — most symbols in a session are ordinary.
 
-The state itself is two fields on `Symbol` ([symbol.hh:114-115](tlib/symbol.hh#L114-L115))
+The state itself is two fields on `Symbol` ([symbol.hh:114-116](tlib/symbol.hh#L114-L116))
 and a session-local registry mapping signature identity to `{base,
 nextLocalOpcode}` ([symbol.cpp:48-55](tlib/symbol.cpp#L48-L55)), cleared at
 `cleanup()` like everything else. The executable version of the whole
@@ -1968,7 +1972,48 @@ mechanism, fold included, is `checkArithmeticSignatureFold()` in
 [tests.cpp:255](tests.cpp#L255); the full specification is
 [SIGNATURE-SPEC.md](SIGNATURE-SPEC.md).
 
-*Code references verified at `9432d5c`.*
+### A second thing a symbol may carry
+
+The argument of this chapter — anything true of a *name* belongs on the symbol,
+where every tree using it reads it for free — has a second application, added
+later and worth knowing because it is the one place a client gets a bit inside
+`CTree` itself.
+
+§2 introduced `fContains`, eight synthesised bits meaning "this kind of
+construct occurs here or below", combined by union over the branches. Those
+eight are **partitioned** ([tree.hh:243-248](tlib/tree.hh#L243-L248)): the low
+nibble is TLIB's, with rules decidable from the node alone; the high nibble
+belongs to the client and TLIB never interprets it.
+
+A client claims its bits by declaring them with its constructors:
+
+```cpp
+Sym delay = signal.add("SigDelay", sigs::kAudioRate);
+```
+
+The second argument ([symbol.hh:196](tlib/symbol.hh#L196)) stores an opaque
+byte on the symbol, and the tree layer folds it into every tree headed by that
+symbol ([recursive-tree.cpp:324](tlib/recursive-tree.cpp#L324)):
+
+```math
+\mathrm{kinds}(t) = \mathrm{tlibKind}(t)\; ∪\; \mathrm{userKinds}(\mathrm{head}(t))\; ∪\; \bigcup_i \mathrm{kinds}(t_i)
+```
+
+— so a client can ask "does this term contain an audio-rate node anywhere?" in
+one bit test, on any node, at no cost per tree. The design went through a
+version where the client supplied a *callback* instead; making it **data on the
+symbol** rather than code removes the registration order problem for everything
+except the one constraint below, and keeps TLIB blind — it unions a byte it
+never reads.
+
+The constraint is the price, and it is the same one §7 has been making all
+along. The byte must be set **before any tree headed by that symbol is built**,
+because bits are stamped once at construction and hash-consing then shares
+them; nothing restamps. Declaring the byte in `Signature::add` is what makes
+that natural — the declaration happens where a language declares its
+constructors, which is necessarily before it builds terms with them.
+
+*Code references verified at `9390a8c`.*
 
 ## Invariants and non-goals
 
@@ -1998,6 +2043,11 @@ handler with no partial state — no half-registered symbol, no consumed opcode.
 **The identity symbol is an ordinary symbol.** It can itself be a constructor
 of some signature; the two roles are independent, and nothing prevents a
 program from using the same `Sym` for both.
+
+**The client's kind bits must be declared before any term uses them.** They are
+stamped at construction and shared by hash-consing; nothing restamps a tree
+built earlier. Declaring them in `Signature::add` is what makes that ordering
+automatic.
 
 **Opcodes are session state.** Two sessions assign bases in creation order, so
 a program that declares its languages in a different order gets different
@@ -2227,7 +2277,8 @@ before the protocol, that redefined variables themselves.
 implements the three rules above, and is called once per node from the `CTree`
 constructor. Alongside it, `calcTreeContains`
 ([recursive-tree.cpp:315](tlib/recursive-tree.cpp#L315)) synthesizes the
-`kContainsRec` bit — "a recursive node occurs here or below" — whose negation
+`kContainsRec` bit — "a recursive node occurs here or below", one of the four
+TLIB reserves in the partition of §7 — whose negation
 `isRecFree()` is a genuinely useful shortcut: a term with no recursive node
 reconstructs to itself, and a bottom-up fold over it reaches its final value in
 a single pass and can never change during a fixpoint iteration (§10). The
