@@ -1,6 +1,9 @@
 ---
-document-style: rapport-2
+document-style: rapport-a4
+author: The Faust Team
 title: A guided tour of TLIB
+subtitle: The tree library at the heart of the Faust compiler
+date:8/8/2026
 ---
 
 # Introduction
@@ -1999,12 +2002,39 @@ symbol ([recursive-tree.cpp:324](tlib/recursive-tree.cpp#L324)):
 \mathrm{kinds}(t) = \mathrm{tlibKind}(t)\; ∪\; \mathrm{userKinds}(\mathrm{head}(t))\; ∪\; \bigcup_i \mathrm{kinds}(t_i)
 ```
 
-— so a client can ask "does this term contain an audio-rate node anywhere?" in
-one bit test, on any node, at no cost per tree. The design went through a
-version where the client supplied a *callback* instead; making it **data on the
-symbol** rather than code removes the registration order problem for everything
-except the one constraint below, and keeps TLIB blind — it unions a byte it
-never reads.
+Reading it back is a mask, and the client owns both sides of the question — its
+own bit constants, taken from the high nibble, and its own predicate:
+
+```cpp
+enum : unsigned int { kAudioRate = 1u << 4 };      // the client's bit
+
+inline bool isAudioRate(Tree t)                    // the client's question
+{
+    return (t->contains() & kAudioRate) != 0;
+}
+```
+
+`contains()` returns the raw byte; TLIB offers named accessors only for its own
+bits (`containsRec`, `isRecFree`), because it has no idea what the others mean.
+Note the ceiling this implies: the client gets **four bits**, and no more.
+
+What makes the arrangement work is a condition on the *shape* of the property,
+and it is the reason the mechanism can be this simple. Bits combine by union
+over the branches, so the only questions expressible are **existential** — "does
+this kind occur anywhere here or below". Faust's use is exactly that: the
+constructors whose result is audio-rate even when every argument is slow —
+inputs, delays, tables, waveforms — declare the bit, and every other constructor
+inherits it by union. Delaying a constant still yields a sample-rate signal,
+which is why a delay must declare. A property of the opposite polarity — "this
+subtree is *free* of X", "everything here is constant" — is a conjunction, does
+not survive the union, and must not be given a bit; the header says so in as
+many words, and reading a bit the other way round is the client's business
+(`isRecFree` is TLIB doing precisely that with its own).
+
+The design went through a version where the client supplied a *callback*
+instead; making it **data on the symbol** rather than code removes the
+registration-order problem for everything except the one constraint below, and
+keeps TLIB blind — it unions a byte it never reads.
 
 The constraint is the price, and it is the same one §7 has been making all
 along. The byte must be set **before any tree headed by that symbol is built**,
@@ -2048,6 +2078,12 @@ program from using the same `Sym` for both.
 stamped at construction and shared by hash-consing; nothing restamps a tree
 built earlier. Declaring them in `Signature::add` is what makes that ordering
 automatic.
+
+**Only existential properties qualify, and there are four bits.** A bit means
+"this kind occurs here or below", because bits combine by union. A property of
+the opposite polarity does not survive that rule and must not be given one —
+read the negation at the call site instead. The high nibble is the whole
+allowance.
 
 **Opcodes are session state.** Two sessions assign bases in creation order, so
 a program that declares its languages in a different order gets different
