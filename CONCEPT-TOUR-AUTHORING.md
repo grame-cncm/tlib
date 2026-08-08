@@ -271,6 +271,16 @@ This is what separates a guided tour from a plausible essay. **Writing
 this kind of document is a code review**, and it will find defects.
 Budget for that.
 
+The rules below are diagonal braces. A scaffold of posts and ledgers has
+no weak member and deforms anyway, because nothing resists shear — and
+the defects this method finds have that shape: code right, comment right
+when written, prose faithful to the comment, whole thing drifted. Asking
+*which member is at fault* is the wrong question. Hence bracing between
+*different* members (a brace within one post does nothing), few of them,
+each looking like dead weight until something pushes sideways — and none
+of it transmitting anything unless fastened: a channel nobody is told to
+read is a diagonal resting against the posts.
+
 **Check every claim about the code against the code**, with a line
 reference, at the moment of writing it. Not "the API is roughly"; open
 the file.
@@ -412,6 +422,12 @@ bug that only construction knowledge could refute was answered by a
 checker that makes the impossible state unrepresentable. Not every
 lesson can be made mechanical. The ones that can, should — and the prose
 then points at the check instead of carrying the weight alone.
+
+The ladder is also where scaffolding ends and building begins. Some
+braces belong to the construction — a coordination journal is one, and
+is gitignored accordingly — while the checks become part of the
+structure, and still hold when nobody remembers the discussion that
+produced them.
 
 ---
 
