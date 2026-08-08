@@ -2362,17 +2362,52 @@ Dead definitions are dropped. And the result goes through the de Bruijn round
 trip, which is where the recursions that have *become* alpha-equivalent collapse
 onto one pointer.
 
-This is a second Tarjan in the library, at a **finer grain** than the `RecPlan`
-of §10: that one partitions groups, this one partitions the projections inside
-them. Measured over 199 Faust programs the two granularities are far apart —
-3835 minimal components against 5210 syntactic groups, 216 knots spanning
-several groups, and 319 definitions held inside a recursion without being
-recursive. One term packed 355 letrecs around a single node of 368 projections.
+Two details in it are the kind that look arbitrary and are not. The definitions
+inside a component are ordered — because the de Bruijn round trip unifies
+*names*, not *positions*, so without a canonical order two permuted twins would
+survive as distinct terms. And the graph is built with a seen-set **per walk**
+rather than a global one
+([recursive-tree.cpp:1266-1270](tlib/recursive-tree.cpp#L1266-L1270)): a
+subtree shared between two definitions must contribute its projections as
+edges of *both*, and a global set would silently drop the second, leaving the
+graph under-connected and the partition too fine.
+
+This is a second Tarjan in the library, and comparing it with the `RecPlan` of
+§10 says something about the subject rather than about the code. Same family —
+a component structure computed once and then consulted — but different grains
+for different jobs: `RecPlan` partitions *groups*, because alpha-conversion is
+by nature per-group, while this partitions the *projections* inside them,
+because that is the grain at which the recursion actually is. "The recursive
+structure of a term" is not one notion; it depends on what you agree to call a
+node.
+
+Measured over 199 Faust programs the two grains are far apart: 3835 minimal
+components against 5210 syntactic groups, 216 knots spanning several groups,
+319 definitions held inside a recursion without being recursive, and 260 of the
+521 multi-definition groups splittable outright. One reverberator packed 355
+letrecs around a single node of 368 projections, because its feedback matrix
+couples everything to everything.
 
 The conformance test is `checkNormalizeRecGroups`
 ([tests.cpp:783](tests.cpp#L783)): a split with a dissolution, twins unified
 across two prisons, a transversal merge, and idempotence — normalising a
 normalised term returns the same pointer.
+
+One consequence was not designed and is the best argument for the
+transformation, because it concerns TLIB alone. `sym2deBruijn` (§8) converts a
+group of mutually recursive definitions **positionally** when they sit in one
+$n$-ary group, but by *mutual inlining* when they are spread across separate
+groups — and mutual inlining is exponential on a deep chain. On one real term,
+an allpass-chain reverberator whose 103 scalar groups formed a single knot of 90
+projections, the conversion simply never finished: sampled after four minutes,
+still inlining. Normalising first flattens the knot into one $n$-ary group and
+the same conversion takes about a second.
+
+So the transformation does not only serve its callers. It puts terms into the
+shape where TLIB's own algorithms have the complexity they advertise — which is
+worth stating as a general lesson: a canonical form is not merely a nicety of
+equality, it is often the precondition under which the operations around it stay
+affordable.
 
 *Code references verified at `2a5eb40`.*
 
@@ -2445,6 +2480,41 @@ Search and Linear Graph Algorithms* (SIAM Journal on Computing 1(2), 1972) to
 find the mutually recursive groups. That a 1972 graph algorithm and a 1972
 notation for binders meet inside one function is a fair summary of what this
 chapter is: recursion is a graph problem wearing the clothes of syntax.
+
+The recursive group has a name outside this library. In programming languages it
+is the **`letrec`**, whose lineage runs from Peter Landin's ISWIM — *The Next
+700 Programming Languages* (CACM 9(3), 1966), where mutually recursive
+definitions appear as `where` clauses — through the Scheme of Steele and
+Sussman, which fixed the keyword. Its meaning is the one §10 computes:
+`letrec x = e in b` is `let x = Y(λx.e) in b`, the binder standing for a fixed
+point.
+
+And the question of the epilogue above — *how should a group be cut?* — has a
+literature, arrived at from two directions that are not ours.
+
+The first is **dependency analysis for type inference**. Under Hindley-Milner,
+all the definitions of one group are typed monomorphically together and
+generalised together, so packing independent definitions into one group *loses
+polymorphism*. The standard remedy is exactly the algorithm above: strongly
+connected components of the dependency graph, typed in topological order. It is
+in Simon Peyton Jones's *The Implementation of Functional Programming
+Languages* (Prentice Hall, 1987), it is specified in the Haskell Report's
+treatment of declaration groups, and it is carried out explicitly in Mark
+Jones's *Typing Haskell in Haskell* (Haskell Workshop, 1999).
+
+The second attacks the construct head on: Oscar Waddell, Dipanwita Sarkar and
+R. Kent Dybvig, *Fixing Letrec: A Faithful Yet Efficient Implementation of
+Scheme's Recursive Binding Construct* (Higher-Order and Symbolic Computation
+18, 2005), with the later *Fixing Letrec (reloaded)*. There the motive is code
+generation — separating the bindings that need a true fixed point from those
+that do not.
+
+Three motives, one decomposition. Haskell splits to keep polymorphism, Scheme
+splits to generate better code, and TLIB splits to make sharing *reachable* —
+so that two identical recursions, packaged differently, can become one object.
+The algorithm was never the contribution; the observation that maximal sharing
+has a granularity precondition is what this chapter adds, and it only becomes
+visible in a library where equal terms are meant to be the same pointer.
 
 
 
