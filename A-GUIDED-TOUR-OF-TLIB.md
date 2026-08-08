@@ -2036,6 +2036,30 @@ instead; making it **data on the symbol** rather than code removes the
 registration-order problem for everything except the one constraint below, and
 keeps TLIB blind — it unions a byte it never reads.
 
+**What this buys is not speed, it is availability.** Faust already had an
+analysis that answers questions about signal rate, and still has it: a recursive
+inference memoised on the nodes, which remains the authority on the finer
+distinctions. The bit did not replace it. What the bit replaced is an annotation
+pass that would otherwise have been *necessary and was never written*.
+
+The reason is where the question gets asked. The guards that need it fire in the
+middle of algebraic rewriting, on **freshly built terms** — trees the internal
+algebra has just constructed and that no pass has ever visited, so no annotation
+could be attached to them. An analysis memoised on nodes meets its worst case
+exactly there: a cold memo, every time, on terms that exist for one rewrite.
+Synthesising the fact at construction removes the problem rather than optimising
+it. **An annotation computed when the node is built cannot be missing.**
+
+The sharpest consequence is one an analysis cannot offer at all: a constructor
+can now *assert* its own precondition, because the fact is available at the
+moment of construction, inside the constructor. A pass that runs afterwards has
+nothing to say to a node being born.
+
+A fair summary of the division of labour: the analysis answers finely every
+question about the trees it has visited; the bit answers one question coarsely
+about *all* trees, including the ones that have just come into existence — and
+an algebra's guards live precisely among the newborns.
+
 The constraint is the price, and it is the same one §7 has been making all
 along. The byte must be set **before any tree headed by that symbol is built**,
 because bits are stamped once at construction and hash-consing then shares
@@ -2084,6 +2108,16 @@ automatic.
 the opposite polarity does not survive that rule and must not be given one —
 read the negation at the call site instead. The high nibble is the whole
 allowance.
+
+**A bit is a one-bit shadow of an analysis, not a cheap version of it.** It is
+an over-approximation in one direction — the union is contagious with no way
+back, so a construct whose result follows only its first argument is still
+marked if any argument carries the bit. That is the safe side for *refusing* an
+optimisation and the wrong tool for anything needing exactness both ways. It can
+also be *finer* than the analysis where the analysis is pessimistic, which is
+the same thing seen from the other end: the two are not refinements of each
+other, they are answers to two different questions. Keep the analysis for the
+questions it was built for.
 
 **Opcodes are session state.** Two sessions assign bases in creation order, so
 a program that declares its languages in a different order gets different
@@ -2444,6 +2478,12 @@ shape where TLIB's own algorithms have the complexity they advertise — which i
 worth stating as a general lesson: a canonical form is not merely a nicety of
 equality, it is often the precondition under which the operations around it stay
 affordable.
+
+TLIB offers this as a transformation; its main client has since made it an
+**invariant**, running it as the symbolic form is born so that every term exists
+in minimal groups from the outset. That is the natural end of a normalisation:
+not a pass one remembers to call, but a shape nothing is allowed to be built
+outside of.
 
 *Code references verified at `2a5eb40`.*
 
