@@ -2328,7 +2328,53 @@ instance-independent is the resulting **order**, because `fCanonKey` (§3)
 strips the instance from those names. For a true canonical form, `deBruijn2Sym`
 is the function to call.
 
-*Code references verified at `9432d5c`.*
+### The granularity that makes sharing reachable
+
+This chapter has claimed twice that alpha-equivalent recursions become the same
+pointer. That is true of the *terms*, and it can still fail to happen — for a
+reason that has nothing to do with alpha-equivalence and everything to do with
+packaging.
+
+A `letrec` group is **syntactic**. Nothing forces its contents to be mutually
+recursive: a group may pack definitions that never refer to one another, and a
+single knot may be spread across several groups. The real structure is the
+strongly connected components of the **projection graph** — one node per
+projection, an edge $p → q$ when the definition of $p$ mentions $q$ — and the
+two disagree in both directions.
+
+The consequence is the part worth keeping. Two identical filters, each
+imprisoned in a different large group, are *not* alpha-equivalent **as
+packaged**: their groups differ, so their de Bruijn forms differ, so
+hash-consing keeps them apart. They become alpha-equivalent only once each is
+reduced to its minimal group. **Splitting is what makes the sharing
+reachable** — the canonical form of this chapter delivers only at the right
+granularity, and the granularity is not given by the syntax.
+
+`normalizeRecGroups` ([recursive-tree.cpp:1264](tlib/recursive-tree.cpp#L1264),
+declared at [tree.hh:567-578](tlib/tree.hh#L567-L578)) rebuilds a term on the
+real structure. Each component becomes one minimal `letrec`, emitted
+dependencies-first — the recursion of the rebuild *is* the topological order. A
+singleton component with no self-reference is not recursive at all, so its
+definition dissolves into a plain expression and the binder disappears.
+Definitions inside a component are ordered by `canonicalTreeLess`, the
+value-derived order of §2, so structural twins agree whatever their history.
+Dead definitions are dropped. And the result goes through the de Bruijn round
+trip, which is where the recursions that have *become* alpha-equivalent collapse
+onto one pointer.
+
+This is a second Tarjan in the library, at a **finer grain** than the `RecPlan`
+of §10: that one partitions groups, this one partitions the projections inside
+them. Measured over 199 Faust programs the two granularities are far apart —
+3835 minimal components against 5210 syntactic groups, 216 knots spanning
+several groups, and 319 definitions held inside a recursion without being
+recursive. One term packed 355 letrecs around a single node of 368 projections.
+
+The conformance test is `checkNormalizeRecGroups`
+([tests.cpp:783](tests.cpp#L783)): a split with a dissolution, twins unified
+across two prisons, a transversal merge, and idempotence — normalising a
+normalised term returns the same pointer.
+
+*Code references verified at `2a5eb40`.*
 
 ## Invariants and non-goals
 
@@ -2352,6 +2398,12 @@ than guessing.
 term in, same pointer out, because names are derived from content.
 `canonicalizeRecNames` gives a canonical *order*, not a canonical *term*.
 Confusing the two is the likeliest misreading of this chapter.
+
+**Canonical is not the same as minimal.** `deBruijn2Sym` canonicalises the term
+it is given; it does not repackage it. Two alpha-equivalent recursions hidden
+in differently-shaped groups stay distinct, and only `normalizeRecGroups`
+reaches them. Its input must be closed, and its traversal recurses to the depth
+of the term.
 
 **Hash collisions are detected, not tolerated.** Content-derived names rest on
 a 64-bit hash; a collision between structurally different groups surfaces as a
