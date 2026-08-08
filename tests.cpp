@@ -779,6 +779,77 @@ bool checkMutualRecursion()
 // (rec(id, nil)) are fatal, with no environment override.
 //-----------------------------------------------------------------------------
 
+
+bool checkNormalizeRecGroups()
+{
+    bool ok = true;
+
+    // ---- 1) split + dissolution : one letrec packing a self-recursive
+    // definition d0 = f(p0) and a non-recursive one d1 = g(p0). After
+    // normalization d0 lives alone in a minimal letrec and d1 dissolves
+    // into a plain expression.
+    Tree v1  = tree(unique("G"));
+    Tree g1  = ref(v1);
+    Tree p10 = proj(0, g1);
+    rec(v1, cons(tree(symbol("f"), p10), cons(tree(symbol("g"), p10), nil())));
+    Tree p11 = proj(1, g1);
+
+    Tree n1 = normalizeRecGroups(tree(symbol("top"), p11));
+    // top(g(proj0(letrec{ f(proj0 self) })))
+    CHECK(n1->node() == Node(symbol("top")) && n1->arity() == 1);
+    Tree d1n = n1->branch(0);
+    CHECK(d1n->node() == Node(symbol("g")) && d1n->arity() == 1);  // dissolved : no letrec
+    int  i;
+    Tree grp;
+    CHECK(isProj(d1n->branch(0), i, grp));
+    Tree var, body;
+    CHECK(isRec(grp, var, body) && len(body) == 1);  // minimal letrec, one definition
+    Tree def = nth(body, 0);
+    CHECK(def->node() == Node(symbol("f")) && def->branch(0) == d1n->branch(0));  // self ref
+
+    // ---- 2) twins unify : the same self-recursive "comb" imprisoned in two
+    // different larger groups becomes pointer-equal once minimal.
+    auto prison = [](const char* other, const char* konst) -> Tree {
+        Tree v  = tree(unique("G"));
+        Tree g  = ref(v);
+        Tree p0 = proj(0, g);
+        rec(v, cons(tree(symbol("comb"), p0),
+                    cons(tree(symbol(other), p0, tree(symbol(konst))), nil())));
+        return proj(1, g);
+    };
+    Tree nA = normalizeRecGroups(tree(symbol("top"), prison("oA", "k1"), prison("oB", "k2")));
+    Tree combA = nA->branch(0)->branch(0);
+    Tree combB = nA->branch(1)->branch(0);
+    CHECK(isProj(combA, i, grp));
+    CHECK(combA == combB);  // alpha-equivalent minimal recursions are THE SAME tree
+
+    // ---- 3) transversal merge : a knot fragmented over two letrecs becomes
+    // one two-definition letrec.
+    Tree va = tree(unique("G"));
+    Tree vb = tree(unique("G"));
+    Tree ga = ref(va);
+    Tree gb = ref(vb);
+    rec(va, cons(tree(symbol("fa"), proj(0, gb)), nil()));
+    rec(vb, cons(tree(symbol("fb"), proj(0, ga)), nil()));
+    Tree n3 = normalizeRecGroups(tree(symbol("top"), proj(0, ga)));
+    Tree pa = n3->branch(0);
+    CHECK(isProj(pa, i, grp));
+    CHECK(isRec(grp, var, body) && len(body) == 2);  // ONE letrec, two definitions
+    // both definitions reference projections of the SAME merged group
+    Tree q0, q1;
+    int  j;
+    CHECK(isProj(nth(body, 0)->branch(0), j, q0) && q0 == grp);
+    CHECK(isProj(nth(body, 1)->branch(0), j, q1) && q1 == grp);
+
+    // ---- 4) idempotence : normalizing a normalized term is the identity,
+    // to the pointer (the canonical form is a fixed point).
+    CHECK(normalizeRecGroups(n1) == n1);
+    CHECK(normalizeRecGroups(nA) == nA);
+    CHECK(normalizeRecGroups(n3) == n3);
+
+    return ok;
+}
+
 bool checkRecImmutability()
 {
     bool ok = true;

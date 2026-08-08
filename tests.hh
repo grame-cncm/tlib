@@ -19,6 +19,7 @@ bool checkSets();
 bool checkEnvironments();
 bool checkRecursiveTrees();
 bool checkMutualRecursion();
+bool checkNormalizeRecGroups();
 bool checkRecImmutability();
 bool checkFixPoint();
 bool checkFixPointInterval();
