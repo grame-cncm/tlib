@@ -2471,12 +2471,35 @@ strongly connected components of the **projection graph** — one node per
 projection, an edge $p → q$ when the definition of $p$ mentions $q$ — and the
 two disagree in both directions.
 
-The consequence is the part worth keeping. Two identical filters, each
-imprisoned in a different large group, are *not* alpha-equivalent **as
-packaged**: their groups differ, so their de Bruijn forms differ, so
-hash-consing keeps them apart. They become alpha-equivalent only once each is
-reduced to its minimal group. **Splitting is what makes the sharing
-reachable** — the canonical form of this chapter delivers only at the right
+Three definitions are enough to show all of it. Take one group holding a
+self-recursive `a`, a `b` that uses `a` without being recursive at all, and a
+`c` that recurses on itself and has nothing to do with the other two — the sort
+of packaging a program's *construction* produces:
+
+```text
+letrec {                          letrec { a = f(a) }
+  a = f(a)                        letrec { c = f(c) }
+  b = g(a)          ────────▶     b = g(a)
+  c = f(c)
+}                                 and then:  letrec { c = f(c) }  ≡  letrec { a = f(a) }
+```
+
+Read the projection graph and the outcome is forced. `a` points at itself and
+`c` at itself; `b` points at `a` and nothing points at `b`. Three components,
+so three minimal groups — except that `b`'s component is a singleton *without a
+self-loop*, which means `b` was never recursive: its binder **dissolves** and it
+becomes an ordinary expression. `a` and `c` were sharing a group for no reason
+at all, so that group **splits**.
+
+And now the payoff, which none of the three definitions could reach while
+packaged together. `a = f(a)` and `c = f(c)` are the same recursion written
+twice. Inside the original group they were not alpha-equivalent — each dragged
+its two neighbours along, so their de Bruijn forms differed and hash-consing
+kept them apart. Minimal, they are alpha-equivalent, the de Bruijn round trip
+gives them one name, and they **merge into a single pointer**.
+
+That is the whole argument in one picture: **splitting is what makes the sharing
+reachable**. The canonical form of this chapter delivers only at the right
 granularity, and the granularity is not given by the syntax.
 
 `normalizeRecGroups` ([recursive-tree.cpp:1264](tlib/recursive-tree.cpp#L1264),
@@ -2827,24 +2850,15 @@ presentation. It is precisely the condition under which the first-encounter
 reading is sound, and its violation is detected instead of being silently
 misread.
 
-Two honest caveats remain.
-
-First, $σ$ is not lexically scoped. It is threaded through the *whole* pass and
-only grows, because two occurrences of the same recursive group anywhere in the
-term must receive the same $X'$ — otherwise the group would be duplicated.
-Strictly, then, the judgment is $σ ⊢ t ⇒ u ⊣ σ'$, a traversal carrying a
-*store* rather than a context. The rules above suppress that threading for
-readability, and the store they suppress is precisely the memo. This is also
-why $σ[X ↦ X']$ is always an **extension** and never an override: with
-$X ∉ \operatorname{dom}σ$ required by *(rec)*, a binding once made is never
-revised, which is what lets a single global table stand in for what would
-otherwise be a stack of scopes.
-
-Second, the memo does two jobs at once and only one of them is $σ$. On ordinary
-nodes it makes the judgment $t ⇒ u$ computed once per *pointer*, which turns a
-tree rewrite into a **shared-graph rewrite** — an optimisation, and a large one.
-On recursive nodes it is $σ$, without which the rules above cannot even be
-stated. Conflating the two is what makes the memo look optional.
+Two caveats, both worked through in [REWRITE-SPEC.md](REWRITE-SPEC.md). $σ$ is
+not lexically scoped: it is threaded through the whole pass and only grows,
+since two occurrences of one group anywhere must receive the same $X'$, so the
+exact judgment is $σ ⊢ t ⇒ u ⊣ σ'$ — a traversal carrying a *store* rather than
+a context, and that store is the memo. And the memo does two jobs at once: on
+ordinary nodes it makes the judgment computed once per pointer, which is
+sharing and an optimisation; on recursive nodes it **is** $σ$, without which the
+rules cannot even be stated. Conflating the two is what makes the memo look
+optional.
 
 Now look at what *(rec)* costs in practice. The three lines that implement it say
 something stronger than "the cycle is cut":
@@ -2870,36 +2884,22 @@ cache in the sense of §5. For a recursive group under construction it is a
 table of **commitments** — knots tied so the traversal can terminate, redeemed
 only as it unwinds. And a commitment cannot be read as a result.
 
-Two consequences follow, and together they are the whole reason passes cannot
-be nested.
+Two consequences follow, and together they forbid nesting one rewrite inside
+another's rule. **A result cannot be consulted while it is being built**: a fold
+invoked from a rule runs mid-traversal, and what it reaches may be a variable
+whose definition does not yet exist — which is precisely what the caller-error
+assertion of the recursive case ([rewrite.hh:74-76](tlib/rewrite.hh#L74-L76))
+detects. And **once built, a result is only one representative of its alpha
+class**: a nested call arriving after a group is complete finds no entry for it
+and renames it again, so two copies of one recursive group reach the output.
 
-**A rewrite's result cannot be consulted while it is being built.** A fold
-invoked from inside a rule runs in the middle of the outer traversal, so what it
-reaches — through the shared memo, or through the partly rebuilt tree handed to
-the rule — may be a variable whose definition does not exist yet. The library
-already names this situation: the assertion at
-[rewrite.hh:74-76](tlib/rewrite.hh#L74-L76) reports a symbolic reference whose
-variable was never defined as a **caller error**. What it is really detecting is
-someone reading an unfinished result.
-
-**Once built, the result is only one representative of its alpha class.** Each
-recursive case mints a fresh variable, so a rewrite is a function on terms only
-*modulo alpha*: a second run on the same input yields an alpha-equivalent term
-made of different pointers. A nested call arriving *after* a group is complete
-therefore finds no memo entry for it — the group was never an original of that
-pass — and rewrites it again, so two copies of one recursive group survive into
-the output.
-
-Neither failure has a cache fix, and it is worth seeing why the two obvious
-ones fail in opposite directions. Share the memo, and the inner pass re-renames
-the outer pass's fresh products: recursive state is duplicated. Separate the
-memos, and the inner pass is re-entered from several points of the outer
-traversal, minting different variables for the *same* original each time, so
-the outer result becomes inconsistent with itself — worse, because it is no
-longer even alpha-equivalent to anything the pass intended. There is no third
-option: *a table keyed by syntactic identity cannot be the cache of a function
-that is only defined up to renaming, and it certainly cannot be read while it
-still holds promises.* The nesting is the error, not its implementation.
+No cache discipline repairs this. The two obvious ones fail in *opposite*
+directions — a shared memo duplicates recursive state, separate memos make the
+outer result inconsistent with itself — and [REWRITE-SPEC.md](REWRITE-SPEC.md)
+works that through. The conclusion is what belongs here: *a table keyed by
+syntactic identity cannot be the cache of a function defined only up to
+renaming, and cannot be read while it still holds promises.* The nesting is the
+error, not its implementation.
 
 ::: warning [How rewriting passes may be composed]
 **Rules compose freely** — a rule may call other rules, examine the node, build
@@ -3454,7 +3454,24 @@ a(c_i) = g\big(a(n), i\big)
 
 On a *tree* the second is as unproblematic as the first: one parent, one value.
 On a **DAG** it stops being a definition, because a node with several parents
-receives several values. What TLIB computes is the solution of the system
+receives several values. The smallest case says it all:
+
+```mermaid
+flowchart TD
+    R["r"] --> S["s"]
+    R --> X["x"]
+    S --> X
+```
+
+Here `x` has two parents. A synthesized attribute of `x` is computed once and
+read by both — sharing pays. An *inherited* attribute of `x` has one value
+coming down through `s` and another straight from `r`, and until you say how
+those combine, `x` simply has no attribute. Occurrence counting adds them and
+answers two; a minimum-depth analysis takes the smaller and answers one. Same
+graph, same question shape, different answers — because the join is part of the
+question, not an implementation detail.
+
+What TLIB computes is therefore the solution of the system
 
 ```math
 a(\mathrm{root}) = \mathrm{seed}
