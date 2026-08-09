@@ -2540,7 +2540,7 @@ in minimal groups from the outset. That is the natural end of a normalisation:
 not a pass one remembers to call, but a shape nothing is allowed to be built
 outside of.
 
-*Code references verified at `2a5eb40`.*
+*Code references verified at `263ff42`.*
 
 ## Invariants and non-goals
 
@@ -3470,27 +3470,65 @@ the number of times $n$ occurs in the *unfolded* term, which is what §12's
 subterms; they differ on the root, which gets the seed here and which `occur`
 conventionally sets to zero, a term not occurring inside itself.
 
-Cycles are where the chapter has to be careful, and where its own premises
-settle the matter. §2 built every tree bottom-up, so a node's children are
-always older than the node: **the branch graph of a TLIB term is acyclic by
-construction**. And §8 put recursive definitions in properties, not branches.
-A traversal that follows branches therefore meets no cycle *and* does not enter
-a recursion — it stops at the recursive node, as §12's `occur` does.
+Recursion is where this becomes interesting, and the answer is more satisfying
+than the machinery it replaced.
 
-The current implementation carries machinery for back edges — a three-state
-marking, contributions replayed over bounded rounds — which by the argument
-above can never fire on a term built by this library. Measured rather than
-argued: on a symbolic recursive term the descent reaches two nodes, the
-recursive node and its variable, and asking for zero, two or nine rounds gives
-the same answer.
+Start from what §2 and §8 already give. Every tree is built bottom-up, so a
+node's children are older than the node: **the branch graph is acyclic by
+construction**. And a recursive definition hangs off its node as a property,
+not as a branch. A traversal following branches alone therefore meets no cycle —
+but it also never enters a recursion, which makes it useless for the very
+analyses this mechanism exists to serve: occurrence counting and delay bounds
+both need to see inside a recursive body.
 
-What a descending attribute over a *recursive* term should mean is therefore
-still open, and it is a real question rather than an oversight. Crossing into
-definitions would produce a genuinely cyclic system, and the joins wanted here
-often have no least solution to converge to: with $\bigsqcup = +$ a node inside
-a recursion occurs unboundedly often in the unfolding, so the least solution is
-**infinite** and some truncation would be needed. Until the traversal crosses
-definitions, that discussion has nothing to bite on.
+So the traversal follows branches **plus doors** — the property edge from a
+recursive node to its definition, crossed once per door. Which turns the
+acyclicity above into a theorem worth stating
+([descend.hh:35-38](tlib/descend.hh#L35-L38)):
+
+> Since the branch graph is acyclic, **every cycle of the extended graph
+> crosses a door.**
+
+Cycles are thereby confined to one identifiable kind of edge, and the question
+becomes: what may a door transmit?
+
+**The constancy of doors** ([descend.hh:39-50](tlib/descend.hh#L39-L50)) answers
+it, and the argument is short. Write $\mathrm{out}(W)$ for what a door $W$ sends
+into its definition. Suppose it were a function of $W$'s own context — the join
+of $W$'s incoming edges. Through the cycle, that context contains contributions
+that depend on $\mathrm{out}(W)$. The equation is circular, and no single pass
+can solve it. The only one-pass answer is that $\mathrm{out}(W)$ be **constant
+with respect to the context** — it may perfectly well be computed from the node
+$W$ itself, but not from what reaches $W$.
+
+And this is not a concession. A recursive definition has **one** instance,
+shared by every use site; an inherited attribute of its body cannot depend on
+any particular one of them without contradicting that sharing. The truncation
+*is* the semantics of sharing — the same asymmetry this chapter opened with,
+met again at the door.
+
+What of the callers' context, then? It is not lost: **it lands on the door**.
+A door node accumulates, like any other, the join of all its incoming edges —
+external uses and the self-references inside its own body alike. That
+accumulator is the dividend of the absorption, and it is where a useful answer
+lives: the maximum delay over every use of a recursive signal is exactly that
+join. It completes only at the end of the traversal, and is never transmitted
+downward.
+
+Three regimes follow, in decreasing comfort
+([descend.hh:58-75](tlib/descend.hh#L58-L75)). **A, edge-local**: the
+contribution ignores the parent's attribute, depending only on the parent node
+and the branch index. A node's attribute is then a join over its finitely many
+incoming *edges* rather than over its infinitely many *paths* — exact in one
+pass, cycles harmless. Occurrence counts and delay bounds are of this kind.
+**B, chained with absorbing doors**: the contribution reads the parent's
+attribute and the door replaces it with its seed; each definition is analysed
+once, independently of its use sites, exact by the constancy argument.
+Condition and clock propagation are of this kind. **C, true fixed points**,
+where the body would see the join of its own entries: out of scope here, and
+for a join like $+$ there is no finite least solution to reach anyway — a node
+inside a recursion occurs unboundedly often in the unfolding. §10 serves the
+synthesized counterpart.
 
 ## In the code
 
@@ -3502,46 +3540,67 @@ std::map<Tree, A, treeorder> descendAttribute(
     Tree root, const A& seed,
     std::function<A(Tree, int, const A&)> contrib,
     std::function<A(const A&, const A&)>  join,
-    int                                   recRounds = 0);
+    std::function<A(Tree)>                doorSeed = nullptr);
 ```
 
-The signature is the specification: seed, contribution, join, and — for the
-cycles that a branch traversal cannot currently meet — how many rounds to spend
-on back edges. The `treeorder` of the result map is §2's determinism
-requirement: an ordered container of trees must name its comparator.
+The signature is the specification: seed, contribution, join, and what a door
+sends into its definition — a function of the door node alone, which is the
+constancy requirement expressed as a type. The `treeorder` of the result map is
+§2's determinism requirement: an ordered container of trees must name its
+comparator.
 
-**Phase one** ([descend.hh:62-99](tlib/descend.hh#L62-L99)) is an iterative
-depth-first exploration that classifies the edges. A three-state marking —
-unseen, on the stack, done — identifies a **back edge** as one whose target is
-currently on the exploration stack, and those are excluded from the parent
-counts. Everything else is a forward edge and increments `fwdParents[child]`.
+Note what is *not* a parameter. The traversal is not told how to find a node's
+children; TLIB knows where its own doors are. Recursion is a fact about the
+representation, not a detail to be configured by the caller.
 
-**Phase two** ([descend.hh:101-154](tlib/descend.hh#L101-L154)) is a Kahn
-descent, and the ordering invariant is mechanical rather than hoped for:
+**Phase one** ([descend.hh:101-132](tlib/descend.hh#L101-L132)) discovers the
+extended graph and counts, for every node, its incoming **branch** edges only.
+Door edges are deliberately not counted: they carry a constant, so they can
+fire unconditionally.
+
+**Phase two** ([descend.hh:134-172](tlib/descend.hh#L134-L172)) is a single
+global Kahn descent. The doors fire first, then a node becomes ready when every
+incoming branch edge has fired:
 
 ```cpp
-inject(c, contrib(n, b, an));
+inject(c, contrib(n, i, an));
 if (--pending[c] == 0) {
     ready.push_back(c);
 }
 ```
 
-`pending[c]` counts the forward parents that still owe `c` a contribution. A
-node becomes ready **only when that count reaches zero** — which is exactly
-"the join is complete before the node descends", enforced by a counter instead
-of by a comment. The rounds loop wraps this, with each round starting from an
-empty table and back-edge contributions read from the previous round's results
-([descend.hh:115-125](tlib/descend.hh#L115-L125)).
+`pending[c]` counts the branch parents that still owe `c` a contribution, and a
+node descends **only when that count reaches zero** — the ordering invariant,
+enforced by a counter rather than by a comment. One consequence is worth
+noticing: a node shared between the outside of a recursion and the inside of a
+body waits for *both* before descending, which a traversal that stops at first
+visit would not do.
 
-The conformance test is `checkDescend` in [tests.cpp:1489](tests.cpp#L1489).
-Two of its cases pin real claims: on the shared DAG `R(S(x, x), x)` the path
-count agrees with `Occur` on the proper subterms — three occurrences of `x`,
-one of `S` — and a *minimum* join computes depth, showing the mechanism does
-not assume additivity. Its third case, on a symbolic recursive term, checks
-only that the total does not shrink as rounds are added; since rounds have no
-effect there, it passes without exercising anything. A test that cannot fail is
-worth noticing, and this one is the reason the paragraph on cycles above had to
-be rewritten.
+And the theorem gets an executable witness
+([descend.hh:173-175](tlib/descend.hh#L173-L175)):
+
+```cpp
+TLIB_ASSERT(processed == pending.size());
+```
+
+If some cycle avoided the doors, the nodes on it would keep a positive count,
+never become ready, and this line would fail. The argument that the descent
+terminates is not left in a comment; it is checked on every run.
+
+The conformance test is `checkDescend` in [tests.cpp:1560](tests.cpp#L1560),
+and its cases are chosen so that each *can* fail. On the shared DAG
+`R(S(x, x), x)` the path count agrees with `Occur` on the proper subterms —
+three occurrences of `x`, one of `S` — and a *minimum* join computes depth,
+showing the mechanism does not assume additivity. The recursive cases check
+that the descent really enters the definition (a branches-only traversal fails
+it), that the edges through the cycle are counted — two external uses and one
+self-reference make three on the door — and that the body's attribute is
+independent of the use site *while* the door's accumulator moves.
+
+That last one has a history worth borrowing. Written first with a `min` join,
+the test could not fail: the internal edge pinned the accumulator whatever the
+external sites did. A test that cannot fail is not a weak test, it is not a
+test — and this chapter has now been corrected twice by that observation.
 
 *Code references verified at `2a5eb40`.*
 
@@ -3558,21 +3617,30 @@ order-sensitive gives an unspecified answer. Sum, minimum and lattice joins all
 qualify. Nothing checks it — the requirement is stated in the header
 ([descend.hh:20-22](tlib/descend.hh#L20-L22)) and nowhere enforced.
 
-**The descent sees no cycles, and `recRounds` is currently inert.** A TLIB
-branch graph is acyclic by construction (§2), so the back-edge machinery cannot
-fire on a term this library built. Do not read the parameter as a knob on
-precision; read it as provision for a traversal that does not yet cross
-recursive definitions.
+**A door transmits a constant, and that is forced rather than chosen.** What
+crosses into a definition may be computed from the door node but never from the
+door's context, or the system becomes circular in one pass. It is also what
+sharing means: one definition, many use sites, so no use site may colour the
+body.
+
+**The door accumulator is complete only at the end.** Every other node's join
+finishes before it descends; a door's does not, because self-references from
+inside its own body keep arriving. This is why the accumulator is never
+transmitted downward — it is a result to read afterwards, not a value to
+propagate.
 
 **Only nodes reachable from the root appear in the result.** The map is not a
 total function on the session's trees, and `at()` on an unreached node throws.
 
-**The descent follows branches only, so it never enters a recursion.** A
-definition hangs off its node as a property (§8), so a descending attribute
-computed over a recursive term stops at the recursive node and says nothing
-about what the recursion contains — the same limitation §12 records for
-`occur`. Anything needing counts *inside* a recursion must cross the
-definitions itself, or normalise first (§8) and ask a different question.
+**Regime C is out of scope.** If an attribute genuinely needs the body to see
+the join of its own entries, this is not the tool: that is a fixed point, it
+needs a lattice and a termination argument, and for a join like $+$ no finite
+least solution exists at all. §10 is the machinery for the synthesized
+direction; nothing here iterates.
+
+**De Bruijn terms have no doors.** Their body is an ordinary branch and their
+references are indices, so for this traversal they are plain DAGs and
+`doorSeed` never fires. The distinction matters only in the symbolic form.
 
 **Cost is proportional to edges, per round.** Each round is one exploration and
 one descent, so `recRounds` multiplies the work linearly — which is the other
@@ -3747,7 +3815,8 @@ unless the caller has arranged otherwise.
 
 **`occur` does not cross recursive definitions.** It follows branches, and §8
 established that definitions live in properties, so occurrences inside a
-recursive body are not counted from outside it.
+recursive body are not counted from outside it. §11's descent does cross them,
+which is the main thing the general mechanism offers over this one.
 
 ## Origins
 
