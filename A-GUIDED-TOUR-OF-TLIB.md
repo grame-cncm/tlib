@@ -380,6 +380,7 @@ compilation. Every symbol and every tree belongs to the session that built it,
 nothing is reclaimed before it ends, and at `cleanup()` everything goes at
 once. Pointers do not survive it. Developed in §4.
 :::
+
 **Signatures partition one global namespace, they do not create their own.**
 Symbols are interned by name for the whole session (§3), and a symbol belongs
 to at most one signature. Two languages therefore cannot both register a
@@ -507,6 +508,7 @@ bound variables: $λx.x$ and $λy.y$ are the same function written twice, and
 meaning, so a compiler treating them as different terms duplicates work and
 misses sharing. Both are put to work in §8.
 :::
+
 One thing hash-consing does *not* buy is worth stating here, because it is the
 most common misunderstanding. Sharing the *storage* of a subterm does not share
 the *work* of traversing it. A fold written the obvious way over the 31-node
@@ -668,6 +670,7 @@ hash-consed pointer, with no renaming pass. A term's **aperture** is how many
 of its de Bruijn references still point outside it, which is what makes it
 *open* or *closed*. Developed in §8.
 :::
+
 Two measurements on real Faust programs give the practical scale: about 72% of
 constructed trees never receive a single property
 ([tree.hh:161](tlib/tree.hh#L161)), which is why property lists are allocated
@@ -845,6 +848,7 @@ able to name it without capturing a name the user chose. TLIB uses it for the
 fresh variables introduced by rewriting (§9) and — less obviously — to give
 every `property` object a private key (§5).
 :::
+
 ## More precisely
 
 Write $\mathrm{Sym}$ for the set of interned symbols. The set of nodes is a
@@ -3642,9 +3646,10 @@ direction; nothing here iterates.
 references are indices, so for this traversal they are plain DAGs and
 `doorSeed` never fires. The distinction matters only in the symbolic form.
 
-**Cost is proportional to edges, per round.** Each round is one exploration and
-one descent, so `recRounds` multiplies the work linearly — which is the other
-reason it is bounded and explicit.
+**Cost is linear in the edges.** One discovery pass and one descent, each edge
+of the extended graph fired exactly once. There is no iteration and no
+parameter to tune: `descendAttribute` either applies to an attribute or does
+not.
 
 ## Origins
 
