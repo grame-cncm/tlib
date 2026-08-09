@@ -26,7 +26,6 @@ bool checkFixPointInterval();
 bool checkRewrite();
 bool checkGuardedRewrite();
 bool checkDnfCnf();
-bool checkOccurrences();
 bool checkErrorHandler();
 bool checkLifecycle();
 bool checkHashTableGrowth();

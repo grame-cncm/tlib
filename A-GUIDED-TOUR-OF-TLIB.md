@@ -28,7 +28,7 @@ library has the shape it has.
 - **Rewriting** — bottom-up transformation of shared and cyclic terms, where memoisation becomes a termination argument.
 - **Fixed points** — computing attributes over recursive terms: Kleene ascent, widening and narrowing.
 - **Descending attributes** — the other direction: what a node inherits from its contexts, and why sharing makes that a question rather than a lookup.
-- **Optional modules** — boolean conditions, occurrence counting.
+- **Optional modules** — boolean conditions, and a module that no longer exists.
 - **The stack, in one picture** — what TLIB is, and what it deliberately never knows.
 :::
 
@@ -3465,10 +3465,10 @@ specification rather than an implementation detail.
 
 Occurrence counting is the instance where $\mathrm{contrib}$ is the identity
 and $\bigsqcup$ is $+$. Then $a(n)$ counts the paths from the root to $n$ —
-the number of times $n$ occurs in the *unfolded* term, which is what §12's
-`occur` computes by a dedicated traversal. The two agree on **proper**
-subterms; they differ on the root, which gets the seed here and which `occur`
-conventionally sets to zero, a term not occurring inside itself.
+the number of times $n$ occurs in the *unfolded* term. Note that the count is
+a join over the finitely many incoming **edges**, never an enumeration of the
+paths themselves, which is what keeps it linear where the quantity it computes
+is not.
 
 Recursion is where this becomes interesting, and the answer is more satisfying
 than the machinery it replaced.
@@ -3672,12 +3672,13 @@ shared; this one asks how much.
 
 ## The idea
 
-Two small modules ship with TLIB and are used by Faust, but nothing in the core
-depends on them: remove either and the library still builds. They are worth a
-short chapter for a reason that has nothing to do with their size — **they are
-the proof that the preceding chapters are enough**. Both are written entirely
-in terms of trees, lists, sets and properties, with no new mechanism, no new
-node kind and no privileged access.
+One small module ships with TLIB, and until recently there were two. Nothing in
+the core depends on them: remove either and the library still builds. They are
+worth a short chapter for a reason that has nothing to do with their size —
+**they are the proof that the preceding chapters are enough**, being written
+entirely in terms of trees, lists, sets and properties, with no new mechanism,
+no new node kind and no privileged access. The one that left proves it twice
+over, as the end of this chapter explains.
 
 **`dcond`** represents boolean conditions in disjunctive or conjunctive normal
 form. A DNF condition is a *set of sets* of trees: the inner sets are
@@ -3686,13 +3687,11 @@ ordered and duplicate-free and §2 makes equal terms one pointer, two conditions
 with the same clauses are the same pointer — so comparing conditions becomes a
 set operation rather than a proof search.
 
-**`occur`** counts, for every subtree of a given root, how many times it occurs.
-That is the natural question to ask of a DAG before generating code: a subterm
-used once can be inlined, a subterm used many times deserves a name and a
-temporary variable. The counting is a traversal that increments a property per
-node. It predates §11 and is the special case of it where the contribution is
-the identity and the join is addition — `checkDescend` pins the two against
-each other.
+**`occur`** counted, for every subtree of a given root, how many times it
+occurred — the natural question to ask of a DAG before generating code, since a
+subterm used once can be inlined while one used many times deserves a name. It
+is worth a paragraph here although it no longer exists, because its removal
+says something the rest of the chapter cannot.
 
 ## Its role in TLIB
 
@@ -3704,17 +3703,34 @@ limited to syntax: normal forms of logical formulae live in the same space as
 signal terms, share the same table, and can be memoised on nodes with the same
 `property`.
 
-`occur` is an application of §5 with one twist worth copying. Occurrence counts
+`occur` was an application of §5 with one twist worth copying. Occurrence counts
 are meaningless without a root — the same subtree occurs a different number of
-times in different terms — so the count cannot simply be *the* count of a node.
-`Occur` therefore mints a **fresh property key per root**, which is §3's gensym
-used to parameterise an annotation. The pattern generalises: whenever a fact is
-a function of a node *and* something else, either the key or the table has to
-carry that something else, exactly as §5's `property2` does for a second tree.
+times in different terms — so the count could not simply be *the* count of a
+node. It therefore minted a **fresh property key per root**, which is §3's
+gensym used to parameterise an annotation. The pattern generalises: whenever a
+fact is a function of a node *and* something else, either the key or the table
+has to carry that something else, exactly as §5's `property2` does for a second
+tree. That idea outlives the module.
 
-Neither module is on the path of any other chapter. They are here because a
+The module itself did not, and the way it went is the useful part. §11's descent
+computes the same numbers as the special case where the contribution is the
+identity and the join is addition — but by joining over the finitely many
+incoming *edges* rather than by walking one path per occurrence. On a shared DAG
+of 21 nodes denoting a term with $2^{20}$ leaves, both return 1 048 576 and the
+dedicated traversal takes some eighty thousand times longer, because it was
+exponential in exactly the sharing §2 exists to create. It also stopped at
+recursive nodes, where the general mechanism crosses them.
+
+When the module was finally looked at, its only consumer turned out to construct
+it and never read it: the one call to `getCount` in the compiler sat inside a
+comment. A potentially exponential traversal, run on every diagram, for a value
+nobody wanted. So `occur` was not migrated, it was deleted.
+
+Neither module is on the path of any other chapter. They were here because a
 library that claims its core is sufficient should be able to point at things
-built on top of it without extending it.
+built on top of it without extending it — and the strongest form of that claim
+is what just happened to one of them: a general mechanism, properly posed, made
+the specialised brick that preceded it redundant, and the brick left.
 
 ## More precisely
 
@@ -3745,17 +3761,18 @@ suite pins exactly that, checking `dnfLess(a, a ∧ b)`
 ([dcond.hh:37](tlib/dcond.hh#L37)) stated the converse until recently, and
 this chapter reproduced the error faithfully; the test is what settled it.
 
-For occurrences, the count is a function of *two* arguments — a subtree and the
-root it is counted in:
+The quantity `occur` computed is a function of *two* arguments — a subtree and
+the root it is counted in:
 
 ```math
 \mathrm{count}_{r}(t) = \#\{\, \text{positions } p ≠ ε \text{ in } r : r|_p = t \,\}
 ```
 
 — the number of positions of $r$ at which $t$ appears, the empty position
-excluded so that the root counts zero. Note that this is a count
-over the *unfolded term*, not over the DAG: a subterm shared by two parents
-occurs twice, which is exactly what a code generator needs to know.
+excluded so that the root counts zero. It is a count over the *unfolded term*,
+not over the DAG: a subterm shared by two parents occurs twice, which is
+exactly what a code generator needs to know. §11 computes it without visiting
+those positions.
 
 ## In the code
 
@@ -3769,23 +3786,11 @@ here !!!!"*), `dnfAnd` carries an *"A REVOIR !!!"*
 commutativity and one ordering example rather than an algebraic
 specification.
 
-`occur` is one small class ([occur.hh:33](tlib/occur.hh#L33)):
-
-```cpp
-class Occur : public Garbageable {
-    Tree fKey;                        // a fresh property key, specific to this root
-   public:
-    Occur(Tree root);                 // count the occurrences of each subtree of root
-    int getCount(Tree t);
-};
-```
-
-The constructor ([occur.cpp:36-38](tlib/occur.cpp#L36-L38)) builds the key,
-walks the tree incrementing a count per node, and then resets the root's own
-count to zero — the root does not occur inside itself. `specificKey`
-([occur.cpp:61-67](tlib/occur.cpp#L61-L67)) is where the per-root key is minted
-with `unique`, and `countOccurrences`
-([occur.cpp:72-77](tlib/occur.cpp#L72-L77)) is the three-line traversal.
+`occur` was one small class — a fresh property key per root, a constructor that
+walked the tree incrementing a count per node and then reset the root's own
+count to zero, and a `getCount` that read the property back. Forty lines, and
+the traversal recursed into every branch with no memo of its own: that is where
+the exponent came from.
 
 *Code references verified at `9432d5c`.*
 
@@ -3804,19 +3809,13 @@ set containing the empty clause rather than the empty set. Anyone relying on
 the boundary cases should pin them down first. This chapter describes the
 module as it is, not as a specified algebra.
 
-**Occurrence counts are per root, and per session.** A count read with one
-`Occur`'s key is meaningless for another root. The counts are properties, so
-they die at `cleanup()` like everything else (§4).
-
-**`occur` counts the unfolded term, not the DAG.** That is the point — but it
-means the count of a heavily shared subterm can be exponentially larger than
-the number of nodes, and the traversal that computes it visits every position
-unless the caller has arranged otherwise.
-
-**`occur` does not cross recursive definitions.** It follows branches, and §8
-established that definitions live in properties, so occurrences inside a
-recursive body are not counted from outside it. §11's descent does cross them,
-which is the main thing the general mechanism offers over this one.
+**A specialised module earns its place only while the general one is missing.**
+`occur` was written before there was any way to express a descending attribute,
+and it was right to exist then. Once §11 arrived it computed the same numbers
+faster, over a wider domain, from a contribution and a join two lines long. The
+lesson is not that the module was bad; it is that the question "what does this
+still buy?" has to be asked of a specialised brick every time a general
+mechanism lands near it.
 
 ## Origins
 
