@@ -3,7 +3,7 @@ document-style: rapport-a4
 author: The Faust Team
 title: A guided tour of TLIB
 subtitle: The tree library at the heart of the Faust compiler
-date:8/8/2026
+date: 2026-08-08
 ---
 
 # Introduction
@@ -206,7 +206,13 @@ over those algebras correct and fast.**
 ## More precisely
 
 A **signature** $Σ$ is a finite set of constructor symbols, each with an arity
-in $ℕ$.
+in $ℕ$. The example above stretches that slightly, and it is worth noticing
+where: `Add`, `Sub`, `Mul` and `Div` are the four registered constructors, but
+`Number` stands for the *whole family* of numeric literals — one nullary
+constructor per value, which is an infinite family, and which TLIB supplies as
+atoms (§3) rather than as members of the signature. Read `Number` as an
+operation parameterised by a data domain; the finiteness below concerns the
+constructors proper.
 
 A **$Σ$-algebra** $𝒜 = (A, (c_𝒜)_{c ∈ Σ})$ has two components: a carrier set
 $A$, and, for every constructor $c ∈ Σ$ of arity $n$, a function
@@ -405,7 +411,6 @@ The programming-language side of the same idea, folds as the canonical way to
 consume an inductive structure, is Meijer, Fokkinga and Paterson (1991), cited
 in the footnote above. A reader who wants only one paper should take the ADJ
 one for the *why* and the *bananas* one for the *how*.
-
 
 
 # Hash-consing and maximal sharing
@@ -749,7 +754,6 @@ the collisions, the memory model, the interaction with memoisation — worked
 through in a different language.
 
 
-
 # Nodes and symbols
 
 ## The idea
@@ -1047,7 +1051,6 @@ Programming*, volume 3, §6.4 — separate chaining, load factors and rehashing
 are exactly what `Symbol::get` and `CTree::make` implement.
 
 
-
 # The session memory model
 
 ## The idea
@@ -1289,7 +1292,6 @@ The pattern is also standard practice in compilers built since: LLVM's
 `BumpPtrAllocator` and the per-pass arenas of most modern compiler
 infrastructures rest on the same observation, that a compilation is a bounded
 batch process whose peak memory is bounded by its input.
-
 
 
 # Properties
@@ -1547,7 +1549,6 @@ Michie's memo functions appeared in the same year, independently, as two views
 of one idea: compute a value from a structure, once, and keep it.
 
 
-
 # Lists, sets and environments
 
 ## The idea
@@ -1784,7 +1785,6 @@ representation equality and union is a merge, is folklore; the observation that
 matters here is Filliâtre and Conchon's (§2): once the representation is
 canonical *and* hash-consed, structural equality of the underlying values comes
 for free, and set equality collapses to a pointer comparison.
-
 
 
 # Signatures and opcodes
@@ -2067,6 +2067,11 @@ them; nothing restamps. Declaring the byte in `Signature::add` is what makes
 that natural — the declaration happens where a language declares its
 constructors, which is necessarily before it builds terms with them.
 
+Natural, but not enforced: `setSymbolUserKinds` is public, a second `add` with
+different bits overwrites the byte, and no tree built earlier is recomputed. The
+ordering is a discipline the API encourages and does not guarantee, and a late
+change leaves old and new trees silently disagreeing.
+
 *Code references verified at `9390a8c`.*
 
 ## Invariants and non-goals
@@ -2100,8 +2105,10 @@ program from using the same `Sym` for both.
 
 **The client's kind bits must be declared before any term uses them.** They are
 stamped at construction and shared by hash-consing; nothing restamps a tree
-built earlier. Declaring them in `Signature::add` is what makes that ordering
-automatic.
+built earlier. Declaring them in `Signature::add` puts the declaration where it
+belongs, but nothing in the API prevents a later write — the byte is not
+write-once, and changing it after terms exist leaves those terms carrying the
+old value.
 
 **Only existential properties qualify, and there are four bits.** A bit means
 "this kind occurs here or below", because bits combine by union. A property of
@@ -2144,7 +2151,6 @@ The identity lives on the interned symbol rather than on the term — §3's
 observation that interning creates a natural home for anything true of a name,
 applied once more, and the reason a constructor's identity costs nothing per
 tree.
-
 
 
 # Recursive terms
@@ -2593,7 +2599,6 @@ has a granularity precondition is what this chapter adds, and it only becomes
 visible in a library where equal terms are meant to be the same pointer.
 
 
-
 # Rewriting
 
 ## The idea
@@ -2666,8 +2671,12 @@ fixed points of §10, which have to be re-run on the result.
 
 ## More precisely
 
-The basic traversal is the **congruence closure** of a local rule: rewrite the
-children, rebuild, apply the rule once to the rebuilt node. Written as an
+The basic traversal is the **closure of a local rule under contexts** — its
+compatible closure, in the vocabulary of term rewriting; the library's header
+calls it the congruence closure, which names the same construction less
+precisely, since *congruence closure* usually denotes the equational decision
+procedure. Rewrite the children, rebuild, apply the rule once to the rebuilt
+node. Written as an
 inference rule, with $σ$ a renaming of recursive variables whose purpose appears
 in a moment:
 
@@ -2846,7 +2855,9 @@ whatever it likes, locally, within the algebra.
 **Folds compose in a pipeline** — each runs to completion before the next
 begins, its memo born and dying with it. Alpha-equivalence is a congruence, so
 a sequence of passes is well defined even though each is only a function up to
-renaming.
+renaming — *provided every pass is itself alpha-invariant*. A rule that
+inspects the concrete name of a generated binder can tell two representatives
+of one class apart, and forfeits the guarantee.
 
 **A fold is never invoked from inside a rule.** Not with a shared memo, not
 with a separate one.
@@ -3034,7 +3045,6 @@ that priority is part of the semantics rather than a scheduling choice, is
 stated in the specification rather than left to be discovered.
 
 
-
 # Fixed points
 
 ## The idea
@@ -3137,8 +3147,10 @@ nothing moves.
 X_0 = ⊥^n, \qquad X_{k+1} = F(X_k)
 ```
 
-— which converges when the domain has no infinite ascending chains, and does
-not otherwise. Intervals over the integers have such chains, which is exactly
+— guaranteed to converge when the domain has no infinite ascending chains, and
+liable not to otherwise: an infinite chain does not force divergence, it only
+removes the guarantee, and many functions stabilise at once on such a
+domain. Intervals over the integers have such chains, which is exactly
 the case that needs help.
 
 **Widening** replaces the update by an operator $∇$ that must satisfy two
@@ -3253,6 +3265,13 @@ session, so repeated analyses of the same term share one Tarjan run.
 With widening it is deliberately not the least. Soundness means the answer
 over-approximates the true value; precision is a separate, best-effort concern.
 
+**Soundness against the *program* is the domain's burden, not the iterator's.**
+A lattice and a monotone `combine` make the iteration well behaved in the
+abstract domain; they say nothing about whether that domain abstracts the
+concrete semantics faithfully. If `combine` is not a sound abstraction of the
+operation it interprets, the iterator will compute an impeccable fixed point of
+the wrong function.
+
 **The domain owes the iterator a real lattice, and a monotone `combine`.**
 `lessEqual` must be a partial order and `bottom`/`top` its bounds; `widen` must
 over-approximate both arguments and must stabilise every chain; and `combine`
@@ -3313,7 +3332,6 @@ again on Tarjan (§8): solving strongly connected components in dependency order
 is what keeps iteration confined to genuinely mutual recursion. The choice of a
 Jacobi rather than Gauss-Seidel update trades speed for order-independence, a
 trade a compiler that must be deterministic (§2) has good reason to make.
-
 
 
 # Descending attributes
@@ -3398,20 +3416,32 @@ specification rather than an implementation detail.
 
 Occurrence counting is the instance where $\mathrm{contrib}$ is the identity
 and $\bigsqcup$ is $+$. Then $a(n)$ counts the paths from the root to $n$ —
-which is exactly the number of times $n$ occurs in the *unfolded* term, the
-quantity §12's `occur` computes by a dedicated traversal.
+the number of times $n$ occurs in the *unfolded* term, which is what §12's
+`occur` computes by a dedicated traversal. The two agree on **proper**
+subterms; they differ on the root, which gets the seed here and which `occur`
+conventionally sets to zero, a term not occurring inside itself.
 
-Cycles are where it gets interesting, and where the honest answer is not the
-elegant one. A symbolic recursive term (§8) has back edges, so the system above
-is genuinely recursive and calls for §10's machinery. But §10 needs a lattice
-with a termination argument, and the joins wanted here often supply neither:
-with $\bigsqcup = +$ on a cyclic graph the least solution is **infinite**,
-since a node inside a recursion really does occur unboundedly often in the
-unfolding. So the implementation does something weaker and says so: back edges
-are cut, and their contributions replayed for a bounded number of extra rounds,
-each round feeding the previous round's values into them. That is a *truncated*
-Kleene ascent — an under-approximation whose depth the caller chooses, with
-zero rounds meaning "cut the cycles entirely".
+Cycles are where the chapter has to be careful, and where its own premises
+settle the matter. §2 built every tree bottom-up, so a node's children are
+always older than the node: **the branch graph of a TLIB term is acyclic by
+construction**. And §8 put recursive definitions in properties, not branches.
+A traversal that follows branches therefore meets no cycle *and* does not enter
+a recursion — it stops at the recursive node, as §12's `occur` does.
+
+The current implementation carries machinery for back edges — a three-state
+marking, contributions replayed over bounded rounds — which by the argument
+above can never fire on a term built by this library. Measured rather than
+argued: on a symbolic recursive term the descent reaches two nodes, the
+recursive node and its variable, and asking for zero, two or nine rounds gives
+the same answer.
+
+What a descending attribute over a *recursive* term should mean is therefore
+still open, and it is a real question rather than an oversight. Crossing into
+definitions would produce a genuinely cyclic system, and the joins wanted here
+often have no least solution to converge to: with $\bigsqcup = +$ a node inside
+a recursion occurs unboundedly often in the unfolding, so the least solution is
+**infinite** and some truncation would be needed. Until the traversal crosses
+definitions, that discussion has nothing to bite on.
 
 ## In the code
 
@@ -3426,10 +3456,10 @@ std::map<Tree, A, treeorder> descendAttribute(
     int                                   recRounds = 0);
 ```
 
-The signature is the specification: seed, contribution, join, and how many
-rounds to spend on back edges. The `treeorder` of the result map is §2's
-determinism requirement — an ordered container of trees must name its
-comparator.
+The signature is the specification: seed, contribution, join, and — for the
+cycles that a branch traversal cannot currently meet — how many rounds to spend
+on back edges. The `treeorder` of the result map is §2's determinism
+requirement: an ordered container of trees must name its comparator.
 
 **Phase one** ([descend.hh:62-99](tlib/descend.hh#L62-L99)) is an iterative
 depth-first exploration that classifies the edges. A three-state marking —
@@ -3454,14 +3484,17 @@ of by a comment. The rounds loop wraps this, with each round starting from an
 empty table and back-edge contributions read from the previous round's results
 ([descend.hh:115-125](tlib/descend.hh#L115-L125)).
 
-The conformance test is `checkDescend` in [tests.cpp:1489](tests.cpp#L1489),
-and its three cases are chosen to pin the three claims above: on the shared DAG
-`R(S(x, x), x)` the path count agrees with `Occur` — three occurrences of `x`,
-one of `S` — a *minimum* join computes depth and shows the mechanism does not
-assume additivity, and a symbolic recursive term terminates with a total that
-grows monotonically as rounds are added.
+The conformance test is `checkDescend` in [tests.cpp:1489](tests.cpp#L1489).
+Two of its cases pin real claims: on the shared DAG `R(S(x, x), x)` the path
+count agrees with `Occur` on the proper subterms — three occurrences of `x`,
+one of `S` — and a *minimum* join computes depth, showing the mechanism does
+not assume additivity. Its third case, on a symbolic recursive term, checks
+only that the total does not shrink as rounds are added; since rounds have no
+effect there, it passes without exercising anything. A test that cannot fail is
+worth noticing, and this one is the reason the paragraph on cycles above had to
+be rewritten.
 
-*Code references verified at `7a9459c`.*
+*Code references verified at `2a5eb40`.*
 
 ## Invariants and non-goals
 
@@ -3476,21 +3509,21 @@ order-sensitive gives an unspecified answer. Sum, minimum and lattice joins all
 qualify. Nothing checks it — the requirement is stated in the header
 ([descend.hh:20-22](tlib/descend.hh#L20-L22)) and nowhere enforced.
 
-**With cycles the result is an under-approximation, by construction.** Bounded
-rounds are a truncation, not a fixed point, and the caller picks the depth.
-This is not a shortcut waiting to be replaced by §10 — for a join like $+$ the
-true least solution over a cyclic graph is infinite, so a truncation is the
-only finite answer there is. A domain that *does* form a lattice with a
-termination argument is a candidate for the §10 treatment; the two mechanisms
-are complementary, not rival.
+**The descent sees no cycles, and `recRounds` is currently inert.** A TLIB
+branch graph is acyclic by construction (§2), so the back-edge machinery cannot
+fire on a term this library built. Do not read the parameter as a knob on
+precision; read it as provision for a traversal that does not yet cross
+recursive definitions.
 
 **Only nodes reachable from the root appear in the result.** The map is not a
 total function on the session's trees, and `at()` on an unreached node throws.
 
-**The descent follows branches only.** As everywhere else (§8), a recursive
-definition hangs off its node as a property and is not a branch, so a
-descending attribute crosses a recursion only in the symbolic form, where the
-cycle is visible in the graph the exploration walks.
+**The descent follows branches only, so it never enters a recursion.** A
+definition hangs off its node as a property (§8), so a descending attribute
+computed over a recursive term stops at the recursive node and says nothing
+about what the recursion contains — the same limitation §12 records for
+`occur`. Anything needing counts *inside* a recursion must cross the
+definitions itself, or normalise first (§8) and ask a different question.
 
 **Cost is proportional to edges, per round.** Each round is one exploration and
 one descent, so `recRounds` multiplies the work linearly — which is the other
@@ -3516,7 +3549,6 @@ counting occurrences to decide what deserves a name is the code generator's
 side of common-subexpression elimination, the question Ershov's 1958 hash table
 was built to answer from the other end. One mechanism finds that a subterm is
 shared; this one asks how much.
-
 
 
 # Optional modules
@@ -3600,10 +3632,11 @@ For occurrences, the count is a function of *two* arguments — a subtree and th
 root it is counted in:
 
 ```math
-\mathrm{count}_{r}(t) = \#\{\, \text{positions } p \text{ in } r : r|_p = t \,\}
+\mathrm{count}_{r}(t) = \#\{\, \text{positions } p ≠ ε \text{ in } r : r|_p = t \,\}
 ```
 
-— the number of positions of $r$ at which $t$ appears. Note that this is a count
+— the number of positions of $r$ at which $t$ appears, the empty position
+excluded so that the root counts zero. Note that this is a count
 over the *unfolded term*, not over the DAG: a subterm shared by two parents
 occurs twice, which is exactly what a code generator needs to know.
 
@@ -3679,7 +3712,6 @@ Counting occurrences to decide what deserves a name is **common subexpression
 elimination** seen from the code generator's side, and takes us back to Ershov
 (1958), cited in §2: the same hash table that finds a repeated subexpression is
 what makes counting its uses meaningful.
-
 
 
 # The stack, in one picture
