@@ -38,7 +38,7 @@
 #include <sys/utsname.h>
 #endif
 
-#include "occur.hh"
+#include "descend.hh"
 #include "tlib.hh"
 
 using Clock = std::chrono::steady_clock;
@@ -353,14 +353,16 @@ static void benchOccurrences(int scale, int runs)
     std::cout << "\n[occurrences]\n";
     const int depth = 20 + (scale > 2 ? 1 : 0);
 
-    reportMedian("Occur-all-visits", fullBinaryNodes(depth), runs, [=]() {
+    reportMedian("descend-path-count", fullBinaryNodes(depth), runs, [=]() {
         tlib::cleanup();
-        Tree        leaf = tree(symbol("x"));
-        Tree        root = makeRepeatedTree(depth, leaf);
-        auto        t0   = Clock::now();
-        Occur       occ(root);
+        Tree leaf = tree(symbol("x"));
+        Tree root = makeRepeatedTree(depth, leaf);
+        auto t0   = Clock::now();
+        auto counts = descendAttribute<long>(
+            root, 1, [](Tree, int, const long& pa) { return pa; },
+            [](const long& a, const long& b) { return a + b; });
         auto        t1   = Clock::now();
-        std::string note = "leaf-count=" + std::to_string(occ.getCount(leaf));
+        std::string note = "leaf-count=" + std::to_string(counts.at(leaf));
         tlib::cleanup();
         return BenchResult{ms(t0, t1), note};
     });

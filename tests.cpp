@@ -15,7 +15,6 @@
 
 #include "dcond.hh"
 #include "fixpoint.hh"
-#include "occur.hh"
 #include "recursive-print.hh"
 #include "tests.hh"
 #include "tlib.hh"
@@ -1181,21 +1180,6 @@ bool checkDnfCnf()
 // Occurrences counting
 //-----------------------------------------------------------------------------
 
-bool checkOccurrences()
-{
-    bool ok = true;
-
-    Tree x    = tree(symbol("shared"));
-    Tree root = tree(symbol("op"), tree(symbol("f"), x), tree(symbol("g"), x, x));
-
-    Occur occ(root);
-    CHECK(occ.getCount(x) == 3);
-    CHECK(occ.getCount(root) == 0);  // by convention the root doesn't count itself
-    CHECK(occ.getCount(tree(symbol("unrelated#"))) == 0);
-
-    return ok;
-}
-
 //-----------------------------------------------------------------------------
 // Error handler hook
 //-----------------------------------------------------------------------------
@@ -1551,9 +1535,9 @@ bool checkHashTableGrowth()
 
 //-----------------------------------------------------------------------------
 // descend.hh : the generic DESCENDING (inherited) attribute. Conformance :
-// the path-count instantiation must agree with Occur on a shared DAG ; a
-// min-depth instantiation exercises a non-additive join ; recursive trees
-// terminate under the cut policy and grow monotonically with the rounds.
+// path-count and min-depth on a shared DAG against hand-computed values ;
+// recursive terms : the descent crosses the doors, the door accumulates
+// its edges, and a definition's attribute ignores its use sites.
 //-----------------------------------------------------------------------------
 #include "descend.hh"
 
@@ -1566,13 +1550,13 @@ bool checkDescend()
     Tree s = tree(symbol("Ds"), x, x);
     Tree r = tree(symbol("Dr"), s, x);
 
-    // path-count = Occur : contribution carries the parent count, join sums
+    // path-count : contribution carries the parent count, join sums
+    // (hand-computed truths : x is reached by 3 paths, s and r by 1)
     auto counts = descendAttribute<int>(
         r, 1, [](Tree, int, const int& pa) { return pa; },
         [](const int& a, const int& b) { return a + b; });
-    Occur occ(r);
-    CHECK(counts.at(x) == 3 && occ.getCount(x) == 3);
-    CHECK(counts.at(s) == 1 && occ.getCount(s) == 1);
+    CHECK(counts.at(x) == 3);
+    CHECK(counts.at(s) == 1);
     CHECK(counts.at(r) == 1);
 
     // min-depth : contribution increments, join takes the minimum

@@ -31,8 +31,7 @@ add_library(tlib STATIC
     tlib/list.cpp
     tlib/recursive-tree.cpp
     tlib/recursive-print.cpp
-    tlib/dcond.cpp
-    tlib/occur.cpp)
+    tlib/dcond.cpp)
 
 # DirectedGraph/ is the first vendored dependency of tlib. Header-only, so there is
 # nothing to compile or link -- only an include path. Recursive trees are part of

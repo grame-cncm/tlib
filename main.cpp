@@ -38,7 +38,6 @@ int main(int, const char**)
     r &= checkRewrite();
     r &= checkGuardedRewrite();
     r &= checkDnfCnf();
-    r &= checkOccurrences();
     r &= checkDescend();
     r &= checkErrorHandler();
     r &= checkHashTableGrowth();
