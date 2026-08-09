@@ -1582,25 +1582,38 @@ bool checkDescend()
     CHECK(depth.at(r) == 0 && depth.at(s) == 1);
     CHECK(depth.at(x) == 1);  // via the direct edge, not through s
 
-    // recursive tree : rec(f(ref(1))) once converted to symbolic form is
-    // cyclic ; the cut policy must terminate, and path-counts must grow
-    // with the rounds (truncated Kleene)
+    // recursive term : W = rec(Df(W)) in closed symbolic form. The descent
+    // must CROSS the door -- the definition lives behind the RECDEF
+    // property, and a branch-only traversal never reaches it (this CHECK
+    // fails on such a descent).
     Tree cyc = deBruijn2Sym(rec(tree(symbol("Df"), ref(1))));
-    auto c0  = descendAttribute<int>(
-        cyc, 1, [](Tree, int, const int& pa) { return pa; },
-        [](const int& a, const int& b) { return a + b; }, 0);
-    auto c2 = descendAttribute<int>(
-        cyc, 1, [](Tree, int, const int& pa) { return pa; },
-        [](const int& a, const int& b) { return a + b; }, 2);
-    CHECK(!c0.empty() && !c2.empty());
-    long s0 = 0, s2 = 0;
-    for (auto& [t, v] : c0) {
-        s0 += v;
-    }
-    for (auto& [t, v] : c2) {
-        s2 += v;
-    }
-    CHECK(s2 >= s0);
+    Tree id, body;
+    CHECK(isRec(cyc, id, body));
+
+    // edge-count through the cycle (regime A : the contribution ignores
+    // the parent attribute, the attribute is a join over incoming EDGES) :
+    // the door accumulates its external uses AND its self-reference
+    Tree r2    = tree(symbol("Dr"), cyc, cyc);  // two external uses
+    auto edges = descendAttribute<int>(
+        r2, 1, [](Tree, int, const int&) { return 1; },
+        [](const int& a, const int& b) { return a + b; });
+    CHECK(edges.count(body) == 1);  // the definition WAS entered
+    CHECK(edges.at(body) == 1);     // once : the constant door edge
+    CHECK(edges.at(cyc) == 3);      // 2 external uses + 1 self-reference
+
+    // absorption (regime B : chained depth) : the attribute of a
+    // definition must not depend on any use site -- under two roots of
+    // different depths, the body's attribute is identical because the
+    // door resets the context to the seed
+    auto chainedDepth = [](Tree root) {
+        return descendAttribute<int>(
+            root, 0, [](Tree, int, const int& pa) { return pa + 1; },
+            [](const int& a, const int& b) { return a > b ? a : b; });  // max-depth
+    };
+    auto dep1 = chainedDepth(tree(symbol("Da"), cyc));
+    auto dep2 = chainedDepth(tree(symbol("Da"), tree(symbol("Db"), tree(symbol("Dc"), cyc))));
+    CHECK(dep1.at(body) == dep2.at(body));         // use-site independence
+    CHECK(dep1.at(cyc) == 1 && dep2.at(cyc) == 3);  // ...the door accumulator does move
 
     return ok;
 }
