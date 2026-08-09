@@ -2060,6 +2060,47 @@ question about the trees it has visited; the bit answers one question coarsely
 about *all* trees, including the ones that have just come into existence — and
 an algebra's guards live precisely among the newborns.
 
+### An ordinal attribute, encoded in existential bits
+
+The condition stated above — only existential properties qualify — sounds
+narrower than it is, and the way Faust widened it is worth the detour, because
+it is the general trick.
+
+Signal rate is not a yes/no fact but a four-level classification: numbers,
+constants, user-interface values, audio. A four-valued ordinal looks like the
+wrong shape for a union of bits. It is encoded in three of them all the same,
+one per level above the bottom, each meaning *a carrier of this level reaches
+me*:
+
+```cpp
+enum : unsigned int {
+    kOrderAudio = 1u << 5,   // an order-3 carrier occurs
+    kOrderCtrl  = 1u << 6,   // an order-2 carrier occurs
+    kOrderConst = 1u << 7,   // an order-1 carrier occurs
+};
+```
+
+The order of a term is then the **highest bit present**, read in three tests.
+What licenses the encoding is a small theorem about the analysis being replaced:
+every one of its inference rules is either a *carrier declaration* — this
+constructor is of level $k$ whatever its arguments — or a *maximum over the
+children*. A rule set of that shape has its lattice maximum coincide with the
+union of the bits, so the ordinal is exactly recoverable from the existential
+family.
+
+That is the generalisation of the whole mechanism: **any attribute whose rules
+are "declare, or take the max of the children" is a chain of existential bits
+in disguise**, and a lattice of height $h$ costs $h - 1$ of them. Faust now
+spends its four on one threshold and three levels, so the client nibble is full
+— which is where this design meets its ceiling, and a reminder that four bits
+is a real budget rather than a formality.
+
+The over-approximations come with it, and they are the same ones as before,
+inherited from the union: a construct whose order legitimately ignores one of
+its branches is still marked by it. The encoding is faithful to the *rule set*,
+not to a hand-tuned analysis, and the difference shows on exactly the
+constructors whose rules were themselves approximations.
+
 The constraint is the price, and it is the same one §7 has been making all
 along. The byte must be set **before any tree headed by that symbol is built**,
 because bits are stamped once at construction and hash-consing then shares
@@ -2113,8 +2154,16 @@ old value.
 **Only existential properties qualify, and there are four bits.** A bit means
 "this kind occurs here or below", because bits combine by union. A property of
 the opposite polarity does not survive that rule and must not be given one —
-read the negation at the call site instead. The high nibble is the whole
-allowance.
+read the negation at the call site instead. An ordinal whose rules declare or
+take the maximum fits, at $h - 1$ bits for a lattice of height $h$; anything
+else does not. The high nibble is the whole allowance, and Faust has now spent
+all four.
+
+**A kind bit is syntactic, so it is only honest on normalised terms.** It
+records that a carrier *occurs*, not that the value depends on it: a product by
+zero still carries whatever its dead factor carried, until a simplification
+removes the factor. Anything reading these bits as semantic facts should ask
+them of terms in normal form.
 
 **A bit is a one-bit shadow of an analysis, not a cheap version of it.** It is
 an over-approximation in one direction — the union is contagious with no way
