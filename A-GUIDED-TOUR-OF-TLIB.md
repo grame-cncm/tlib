@@ -3526,11 +3526,12 @@ body has one attribute, and $\mathrm{out}(W)$ cannot depend on *which* use site
 is asking. That much is forced.
 
 What sharing leaves open is whether $\mathrm{out}(W)$ may depend on *all* the
-use sites jointly — the join of $W$'s incoming edges. It may, mathematically:
-through the cycle that join contains contributions depending on
-$\mathrm{out}(W)$, so the equation is circular and has a least solution in a
-lattice. What it does not have is a solution reachable by the single
-topological pass used here.
+use sites jointly — the join of $W$'s incoming edges. Through the cycle, that
+join contains contributions depending on $\mathrm{out}(W)$, so the equation is
+circular; under the usual completeness and monotonicity assumptions it *may*
+then be given a least-fixed-point semantics. The "may" carries weight: with $+$
+over the naturals there is no finite solution to be had. What such a system
+never has is a solution reachable by the single topological pass used here.
 
 So the constancy — $\mathrm{out}(W)$ computable from the node $W$ but not from
 what reaches $W$ — is the **contract this mechanism chooses** in order to stay
@@ -3557,9 +3558,12 @@ off each parent's own label is the useful one.
 
 **B, chained with absorbing doors**: the contribution reads the parent's
 attribute, and the door replaces it with its seed. Each definition is analysed
-once, independently of its use sites, exact by the constancy contract. Path
-counting, depth, and condition or clock propagation are all of this kind — they
-pass something down, so they need the door to cut the circularity.
+once, independently of its use sites, exact by the constancy contract. Depth,
+and condition or clock propagation, are of this kind — they pass something down,
+so they need the door to cut the circularity. Path counting too, with the
+qualification the previous section earned: what is counted is paths *within*
+each absorbing boundary, never paths of the recursive unfolding, of which there
+are infinitely many.
 
 **C, true fixed points**, where the body would see the join of its own entries:
 out of scope here. That is where the choice rejected above lives, and for a
@@ -3654,11 +3658,12 @@ order-sensitive gives an unspecified answer. Sum, minimum and lattice joins all
 qualify. Nothing checks it — the requirement is stated in the header
 ([descend.hh:20-22](tlib/descend.hh#L20-L22)) and nowhere enforced.
 
-**A door transmits a constant, and that is forced rather than chosen.** What
-crosses into a definition may be computed from the door node but never from the
-door's context, or the system becomes circular in one pass. It is also what
-sharing means: one definition, many use sites, so no use site may colour the
-body.
+**A door transmits a constant — the contract, not a theorem.** What crosses
+into a definition may be computed from the door node, never from the door's
+context. Sharing settles the weaker half on its own: one definition, many use
+sites, so no *particular* site may colour the body. Whether all of them jointly
+could is a fixed-point question, and answering it is what this mechanism
+declines to do.
 
 **The door accumulator is complete only at the end.** Every other node's join
 finishes before it descends; a door's does not, because self-references from

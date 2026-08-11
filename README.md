@@ -61,8 +61,8 @@ int main()
 | `tlib/recursive-print.hh/.cpp` | `toDeBruijnString` / `toSymbolicString` diagnostics |
 | `tlib/rewrite.hh` | `treeRewrite` (plain and `pre`/`post` guarded) and `treeRewritePaired` (paired rule, exposed memo, definition seam): bottom-up rewriting over shared and symbolic-recursive trees — see [REWRITE-SPEC.md](REWRITE-SPEC.md) |
 | `tlib/fixpoint.hh` | generic attribute computation by fixed point over recursive terms (Kleene ascent + widening/narrowing, descending probe) |
+| `tlib/descend.hh` | `descendAttribute`: generic descending (inherited) attribute over a tree, a DAG or a **symbolic** recursive term — contribution, join, absorbing doors |
 | `tlib/dcond.hh/.cpp` | boolean conditions in DNF/CNF (optional module) |
-| `tlib/occur.hh/.cpp` | subtree occurrence counting (optional module) |
 | `tlib/garbageable.hh/.cpp` | session memory model: allocate freely, free all at cleanup |
 | `tlib/tlib-error.hh/.cpp` | pluggable error handler (defaults to `std::runtime_error`) |
 
@@ -232,9 +232,9 @@ Benchmark groups:
 - `walk-unique-shared-nodes`: walks the same tree but uses `CTree::gVisitTime`
   to visit each shared node once. This approximates compiler passes that avoid
   repeated work on DAGs.
-- `Occur-all-visits`: uses `Occur` to count subtree occurrences in a tree with
-  extreme sharing. This measures recursive occurrence annotation when every
-  logical occurrence is counted.
+- `descend-path-count`: counts paths with `descendAttribute` on a tree with
+  extreme sharing. This measures a descending attribute where the quantity
+  computed grows exponentially while the traversal does not.
 - `sharing-first-visit-annotate`: annotates a large mostly-unshared tree with a
   fresh property key, visiting each node once. This is close to Faust sharing
   analysis (`shlysis`) first-visit behavior.
