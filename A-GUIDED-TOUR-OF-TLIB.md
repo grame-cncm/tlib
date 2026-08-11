@@ -3471,18 +3471,33 @@ answers two; a minimum-depth analysis takes the smaller and answers one. Same
 graph, same question shape, different answers — because the join is part of the
 question, not an implementation detail.
 
-What TLIB computes is therefore the solution of the system
+What TLIB computes is therefore the solution of one system, written once here
+and used for the rest of the chapter:
 
 ```math
-a(\mathrm{root}) = \mathrm{seed}
-\qquad
-a(n) = \bigsqcup_{(p,\,i)\ ∈\ \mathrm{parents}(n)} \mathrm{contrib}(p, i, a(p))
+a(n) = \bigsqcup\Big(\, S(n)\ ∪\ \big\{\, \mathrm{contrib}(p, i, a(p))\ \big|\
+p \xrightarrow{\ i\ }_{\text{branch}} n \,\big\} \Big)
 ```
 
-— every node's attribute is the join of the contributions of all the edges
-arriving at it. On an acyclic graph this has a unique solution and one
-topological pass computes it, which is why the ordering is part of the
-specification rather than an implementation detail.
+```math
+S(n) = \{\, \mathrm{seed} \mid n = \mathrm{root} \,\}\ ∪\
+       \{\, \mathrm{doorSeed}(W) \mid \mathrm{def}(W) = n \,\}
+```
+
+— a node's attribute is the join of two things: the contributions arriving
+along ordinary branch edges, each computed from *its source's* attribute, and
+the **seeds** $S(n)$, which are given outright. The root has one; the body of a
+recursive definition has one, from its door.
+
+The whole of the recursive treatment is in that asymmetry, so it is worth
+stating before the machinery that implements it: **door edges appear only in
+$S(n)$**. Unlike a branch edge, a door does not transmit the attribute of its
+source. That is why they can all fire before the descent begins, and why no
+recursive equation is left to solve.
+
+On an acyclic graph the system has a unique solution and one topological pass
+computes it, which is why the ordering is part of the specification rather than
+an implementation detail.
 
 Two instances are worth telling apart, because they look alike and are not.
 Let $\bigsqcup$ be $+$ in both. If the contribution **passes the parent's
@@ -3538,13 +3553,26 @@ what reaches $W$ — is the **contract this mechanism chooses** in order to stay
 one pass, not a consequence of sharing. The other choice is regime C below, and
 it is a fixed point, with everything that implies.
 
-What of the callers' context, then? It is not lost: **it lands on the door**.
-A door node accumulates, like any other, the join of all its incoming edges —
-external uses and the self-references inside its own body alike. That
-accumulator is what the absorption gives back, and it is where a useful answer
-lives: the maximum delay over every use of a recursive signal is exactly that
-join. It completes only at the end of the traversal, and is never transmitted
-downward.
+So a recursive node carries **two values that must not be confused**, and
+seeing them apart is the whole of the mechanism:
+
+- $\mathrm{doorOut}(W) = \mathrm{doorSeed}(W)$ — what the door sends into the
+  definition. Available immediately, because it does not read $W$'s attribute.
+- $a(W)$ — what accumulates *on* $W$: the join of the contributions arriving
+  along ordinary branch edges, from external uses and from the recursive
+  references inside the definition alike.
+
+Keeping them distinct is what breaks the cycle. The definition may be entered
+before $a(W)$ is anywhere near complete, because what it receives is
+$\mathrm{doorSeed}(W)$ and not $a(W)$. Evaluating the definition then produces
+further contributions *to* $W$ — and those are collected, not fed back. Put the
+other way round: the door does not delay a circular value, it transmits at once
+a different value, defined precisely so as not to be circular.
+
+The callers' context is therefore neither lost nor allowed to colour the
+definition. It stays visible on $W$, to be read after the traversal — which is
+where a useful answer lives, the maximum delay over every use of a recursive
+signal being exactly that join.
 
 Three regimes follow, in decreasing comfort
 ([descend.hh:64-84](tlib/descend.hh#L64-L84)).
@@ -3665,11 +3693,13 @@ sites, so no *particular* site may colour the body. Whether all of them jointly
 could is a fixed-point question, and answering it is what this mechanism
 declines to do.
 
-**The door accumulator is complete only at the end.** Every other node's join
-finishes before it descends; a door's does not, because self-references from
-inside its own body keep arriving. This is why the accumulator is never
-transmitted downward — it is a result to read afterwards, not a value to
-propagate.
+**The ordering invariant has two parts, not one with an exception.** Ordinary
+branch edges follow Kahn order: a node's join is complete before its branches
+are processed. Door edges fire *outside* that order, before the descent begins,
+and may do so precisely because their value is $\mathrm{doorSeed}(W)$ and reads
+no accumulator. So a door enters its definition while $a(W)$ is still
+incomplete, without ever exposing an incomplete value to it. What is never fed
+back through a door is $a(W)$ itself.
 
 **Only nodes reachable from the root appear in the result.** The map is not a
 total function on the session's trees, and `at()` on an unreached node throws.
