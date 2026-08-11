@@ -2567,7 +2567,7 @@ in minimal groups from the outset. That is the natural end of a normalisation:
 not a pass one remembers to call, but a shape nothing is allowed to be built
 outside of.
 
-*Code references verified at `263ff42`.*
+*Code references verified at `790a70b`.*
 
 ## Invariants and non-goals
 
@@ -3511,7 +3511,7 @@ both need to see inside a recursive body.
 So the traversal follows branches **plus doors** — the property edge from a
 recursive node to its definition, crossed once per door. That turns the
 acyclicity above into a theorem worth stating
-([descend.hh:35-38](tlib/descend.hh#L35-L38)):
+([descend.hh:36-39](tlib/descend.hh#L36-L39)):
 
 > Since the branch graph is acyclic, **every cycle of the extended graph
 > crosses a door.**
@@ -3519,7 +3519,7 @@ acyclicity above into a theorem worth stating
 Cycles are thereby confined to one identifiable kind of edge, and the question
 becomes: what may a door transmit?
 
-**The constancy of doors** ([descend.hh:39-50](tlib/descend.hh#L39-L50)) answers
+**The constancy of doors** ([descend.hh:40-53](tlib/descend.hh#L40-L53)) answers
 it. Write $\mathrm{out}(W)$ for what a door $W$ sends into its definition, and
 notice first what sharing does settle: a definition has **one** instance, so its
 body has one attribute, and $\mathrm{out}(W)$ cannot depend on *which* use site
@@ -3547,7 +3547,7 @@ join. It completes only at the end of the traversal, and is never transmitted
 downward.
 
 Three regimes follow, in decreasing comfort
-([descend.hh:58-75](tlib/descend.hh#L58-L75)).
+([descend.hh:64-84](tlib/descend.hh#L64-L84)).
 
 **A, edge-local**: the contribution ignores the parent's attribute, depending
 only on the parent node and the branch index. A node's attribute is then a join
@@ -3594,12 +3594,12 @@ Note what is *not* a parameter. The traversal is not told how to find a node's
 children; TLIB knows where its own doors are. Recursion is a fact about the
 representation, not a detail to be configured by the caller.
 
-**Phase one** ([descend.hh:101-132](tlib/descend.hh#L101-L132)) discovers the
+**Phase one** ([descend.hh:111-142](tlib/descend.hh#L111-L142)) discovers the
 extended graph and counts, for every node, its incoming **branch** edges only.
 Door edges are deliberately not counted: they carry a constant, so they can
 fire unconditionally.
 
-**Phase two** ([descend.hh:134-172](tlib/descend.hh#L134-L172)) is a single
+**Phase two** ([descend.hh:144-181](tlib/descend.hh#L144-L181)) is a single
 global Kahn descent. The doors fire first, then a node becomes ready when every
 incoming branch edge has fired:
 
@@ -3618,7 +3618,7 @@ body waits for *both* before descending, which a traversal that stops at first
 visit would not do.
 
 And the theorem gets an executable witness
-([descend.hh:173-175](tlib/descend.hh#L173-L175)):
+([descend.hh:182-184](tlib/descend.hh#L182-L184)):
 
 ```cpp
 TLIB_ASSERT(processed == pending.size());
@@ -3656,7 +3656,7 @@ otherwise overwrite each other under one key.
 parents arrive in an unspecified order and are folded as they come, so anything
 order-sensitive gives an unspecified answer. Sum, minimum and lattice joins all
 qualify. Nothing checks it — the requirement is stated in the header
-([descend.hh:20-22](tlib/descend.hh#L20-L22)) and nowhere enforced.
+([descend.hh:21-23](tlib/descend.hh#L21-L23)) and nowhere enforced.
 
 **A door transmits a constant — the contract, not a theorem.** What crosses
 into a definition may be computed from the door node, never from the door's
