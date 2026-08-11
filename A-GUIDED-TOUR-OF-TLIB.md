@@ -3484,12 +3484,18 @@ arriving at it. On an acyclic graph this has a unique solution and one
 topological pass computes it, which is why the ordering is part of the
 specification rather than an implementation detail.
 
-Occurrence counting is the instance where $\mathrm{contrib}$ is the identity
-and $\bigsqcup$ is $+$. Then $a(n)$ counts the paths from the root to $n$ —
-the number of times $n$ occurs in the *unfolded* term. Note that the count is
-a join over the finitely many incoming **edges**, never an enumeration of the
-paths themselves, which is what keeps it linear where the quantity it computes
-is not.
+Two instances are worth telling apart, because they look alike and are not.
+Let $\bigsqcup$ be $+$ in both. If the contribution **passes the parent's
+attribute down**, $a(n)$ counts the *paths* from the root to $n$ — the number
+of times $n$ occurs in the unfolded term. If instead the contribution returns
+a constant $1$, $a(n)$ counts the *incoming edges* of $n$ in the finite graph.
+
+On a DAG the first is what a code generator wants, and one pass computes it
+without ever enumerating a path. On a cyclic graph it stops existing: a node
+inside a recursion is reached by infinitely many paths. The edge count remains
+finite and meaningful there, and the difference between the two is exactly the
+difference between reading the parent's attribute and ignoring it — which is
+the distinction the regimes below are built on.
 
 Recursion is where this becomes interesting, and the answer is more satisfying
 than the machinery it replaced.
@@ -3503,7 +3509,7 @@ analyses this mechanism exists to serve: occurrence counting and delay bounds
 both need to see inside a recursive body.
 
 So the traversal follows branches **plus doors** — the property edge from a
-recursive node to its definition, crossed once per door. Which turns the
+recursive node to its definition, crossed once per door. That turns the
 acyclicity above into a theorem worth stating
 ([descend.hh:35-38](tlib/descend.hh#L35-L38)):
 
@@ -3514,41 +3520,51 @@ Cycles are thereby confined to one identifiable kind of edge, and the question
 becomes: what may a door transmit?
 
 **The constancy of doors** ([descend.hh:39-50](tlib/descend.hh#L39-L50)) answers
-it, and the argument is short. Write $\mathrm{out}(W)$ for what a door $W$ sends
-into its definition. Suppose it were a function of $W$'s own context — the join
-of $W$'s incoming edges. Through the cycle, that context contains contributions
-that depend on $\mathrm{out}(W)$. The equation is circular, and no single pass
-can solve it. The only one-pass answer is that $\mathrm{out}(W)$ be **constant
-with respect to the context** — it may perfectly well be computed from the node
-$W$ itself, but not from what reaches $W$.
+it. Write $\mathrm{out}(W)$ for what a door $W$ sends into its definition, and
+notice first what sharing does settle: a definition has **one** instance, so its
+body has one attribute, and $\mathrm{out}(W)$ cannot depend on *which* use site
+is asking. That much is forced.
 
-And this is not a concession. A recursive definition has **one** instance,
-shared by every use site; an inherited attribute of its body cannot depend on
-any particular one of them without contradicting that sharing. The truncation
-*is* the semantics of sharing — the same asymmetry this chapter opened with,
-met again at the door.
+What sharing leaves open is whether $\mathrm{out}(W)$ may depend on *all* the
+use sites jointly — the join of $W$'s incoming edges. It may, mathematically:
+through the cycle that join contains contributions depending on
+$\mathrm{out}(W)$, so the equation is circular and has a least solution in a
+lattice. What it does not have is a solution reachable by the single
+topological pass used here.
+
+So the constancy — $\mathrm{out}(W)$ computable from the node $W$ but not from
+what reaches $W$ — is the **contract this mechanism chooses** in order to stay
+one pass, not a consequence of sharing. The other choice is regime C below, and
+it is a fixed point, with everything that implies.
 
 What of the callers' context, then? It is not lost: **it lands on the door**.
 A door node accumulates, like any other, the join of all its incoming edges —
 external uses and the self-references inside its own body alike. That
-accumulator is the dividend of the absorption, and it is where a useful answer
+accumulator is what the absorption gives back, and it is where a useful answer
 lives: the maximum delay over every use of a recursive signal is exactly that
 join. It completes only at the end of the traversal, and is never transmitted
 downward.
 
 Three regimes follow, in decreasing comfort
-([descend.hh:58-75](tlib/descend.hh#L58-L75)). **A, edge-local**: the
-contribution ignores the parent's attribute, depending only on the parent node
-and the branch index. A node's attribute is then a join over its finitely many
-incoming *edges* rather than over its infinitely many *paths* — exact in one
-pass, cycles harmless. Occurrence counts and delay bounds are of this kind.
+([descend.hh:58-75](tlib/descend.hh#L58-L75)).
+
+**A, edge-local**: the contribution ignores the parent's attribute, depending
+only on the parent node and the branch index. A node's attribute is then a join
+over its finitely many incoming *edges*, never over its paths — exact in one
+pass, and cycles are harmless because an edge count stays finite where a path
+count does not. Counting incoming edges is the plain case; a delay bound read
+off each parent's own label is the useful one.
+
 **B, chained with absorbing doors**: the contribution reads the parent's
-attribute and the door replaces it with its seed; each definition is analysed
-once, independently of its use sites, exact by the constancy argument.
-Condition and clock propagation are of this kind. **C, true fixed points**,
-where the body would see the join of its own entries: out of scope here, and
-for a join like $+$ there is no finite least solution to reach anyway — a node
-inside a recursion occurs unboundedly often in the unfolding. §10 serves the
+attribute, and the door replaces it with its seed. Each definition is analysed
+once, independently of its use sites, exact by the constancy contract. Path
+counting, depth, and condition or clock propagation are all of this kind — they
+pass something down, so they need the door to cut the circularity.
+
+**C, true fixed points**, where the body would see the join of its own entries:
+out of scope here. That is where the choice rejected above lives, and for a
+join like $+$ there is no finite least solution to reach anyway — a node inside
+a recursion occurs unboundedly often in the unfolding. §10 serves the
 synthesized counterpart.
 
 ## In the code
@@ -3610,9 +3626,9 @@ terminates is not left in a comment; it is checked on every run.
 
 The conformance test is `checkDescend` in [tests.cpp:1560](tests.cpp#L1560),
 and its cases are chosen so that each *can* fail. On the shared DAG
-`R(S(x, x), x)` the path count agrees with `Occur` on the proper subterms —
-three occurrences of `x`, one of `S` — and a *minimum* join computes depth,
-showing the mechanism does not assume additivity. The recursive cases check
+`R(S(x, x), x)` the path count matches the hand-computed truth — `x` is
+reached by three paths, `s` and `r` by one — and a *minimum* join computes
+depth, showing the mechanism does not assume additivity. The recursive cases check
 that the descent really enters the definition (a branches-only traversal fails
 it), that the edges through the cycle are counted — two external uses and one
 self-reference make three on the door — and that the body's attribute is
@@ -3620,7 +3636,7 @@ independent of the use site *while* the door's accumulator moves.
 
 That last one has a history worth borrowing. Written first with a `min` join,
 the test could not fail: the internal edge pinned the accumulator whatever the
-external sites did. A test that cannot fail is not a weak test, it is not a
+external sites did. A test that cannot fail is not a weak test; it is not a
 test — and this chapter has now been corrected twice by that observation.
 
 *Code references verified at `2a5eb40`.*
@@ -3659,14 +3675,20 @@ needs a lattice and a termination argument, and for a join like $+$ no finite
 least solution exists at all. §10 is the machinery for the synthesized
 direction; nothing here iterates.
 
-**De Bruijn terms have no doors.** Their body is an ordinary branch and their
-references are indices, so for this traversal they are plain DAGs and
-`doorSeed` never fires. The distinction matters only in the symbolic form.
+**Recursive descent is defined on symbolic terms only.** A de Bruijn term is
+traversed as its finite syntactic DAG — its body is an ordinary branch, its
+references are index leaves, and nothing resolves them — so `doorSeed` never
+fires and the recursive flow is simply not analysed. A client holding a de
+Bruijn term must convert it with `deBruijn2Sym` (§8) before asking these
+questions. The division of labour is a fair one: the de Bruijn form is how
+recursion is *canonicalised*, the symbolic form is where the doors an inherited
+attribute needs actually exist.
 
-**Cost is linear in the edges.** One discovery pass and one descent, each edge
-of the extended graph fired exactly once. There is no iteration and no
-parameter to tune: `descendAttribute` either applies to an attribute or does
-not.
+**A linear number of steps, not a linear cost.** One discovery pass and one
+descent, each edge of the extended graph fired exactly once — but the tables
+are `std::map`, so every access costs a logarithm and the whole is
+$O((V + E)\log V)$. There is no iteration and no parameter to tune:
+`descendAttribute` either applies to an attribute or does not.
 
 ## Origins
 
